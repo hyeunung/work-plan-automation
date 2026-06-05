@@ -2,8 +2,17 @@ const { WebClient } = require('@slack/web-api');
 const config = require('../config');
 const fs = require('fs');
 const path = require('path');
+const supabaseService = require('./supabaseService');
 
 const slack = new WebClient(config.slack.token);
+
+const MEMBER_EMAILS = {
+  '김윤회': 'yoon-whoi.kim@hansl.com',
+  '김희승': 'hee-seung.kim@hansl.com',
+  '최현빈': 'hyun-bin.choi@hansl.com'
+};
+
+const userIdCache = {};
 
 /**
  * 채널명(예: '스마트팜-workplan')을 받아 해당하는 실시간 슬랙 채널 ID를 조회합니다.
@@ -712,6 +721,9 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
   try {
     const dayLabel = formatDayLabel(date);
     
+    // Supabase에서 승인된 출장자 정보 조회
+    const approvedTrips = await supabaseService.getApprovedBusinessTrips(date);
+    
     // 1. 공통 헤더 메시지 발송 및 실시간 DM 채널 ID 동적 추출
     let headerText = `📢 *[일일 업무 보고 브리핑]* (${dayLabel})\n`;
     headerText += `> 당일 팀원들의 Notion Daily Work Log 취합 요약 브리핑입니다.\n\n`;
@@ -732,9 +744,13 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
     // 2. 담당자별로 일지 단위 메시지 전송 (한슬 토글 최적화 및 50개 블록 제한 원천 차단)
     for (const rep of memberReports) {
       const cleanName = rep.memberName.replace(' 님', '').trim();
+      const memberEmail = MEMBER_EMAILS[cleanName];
+      const isTripFromSupabase = memberEmail && approvedTrips.has(memberEmail);
 
       let statusLabel = '';
-      if (rep.dailyLogs && rep.dailyLogs.length > 0) {
+      if (isTripFromSupabase) {
+        statusLabel = ' (출장)';
+      } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
         let hasVacation = false;
         let hasMorningHalf = false;
         let hasAfternoonHalf = false;
@@ -775,10 +791,11 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
       await new Promise(resolve => setTimeout(resolve, 1500));
 
       if (!rep.dailyLogs || rep.dailyLogs.length === 0) {
-        dailyArchiveContent += `* _오늘 기록된 일일 업무 일지가 없습니다._\n\n`;
+        const emptyText = isTripFromSupabase ? '* _오늘 기록된 일일 업무 일지가 없습니다. (출장)_' : '* _오늘 기록된 일일 업무 일지가 없습니다._';
+        dailyArchiveContent += `${emptyText}\n\n`;
         await slack.chat.postMessage({
           channel: realDmChannelId,
-          text: `* _오늘 기록된 일일 업무 일지가 없습니다._`,
+          text: emptyText,
           mrkdwn: true,
           unfurl_links: false
         });
@@ -923,9 +940,56 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
   }
 }
 
+async function findUserIdByEmail(email) {
+  const cleanEmail = email.trim().toLowerCase();
+  if (userIdCache[cleanEmail]) {
+    return userIdCache[cleanEmail];
+  }
+  try {
+    const response = await slack.users.lookupByEmail({ email: cleanEmail });
+    if (response.ok && response.user?.id) {
+      userIdCache[cleanEmail] = response.user.id;
+      return response.user.id;
+    }
+  } catch (error) {
+    console.error(`[Slack] 이메일 기준 유저 ID 조회 실패 (${cleanEmail}):`, error.message);
+  }
+  return null;
+}
+
+async function sendChannelReminder({ mentionIds, targetChannelName = '스마트팜-workplan' }) {
+  try {
+    if (!mentionIds || mentionIds.length === 0) {
+      console.log(`[Slack] 독려 대상자가 없어 채널 메시지 발송을 생략합니다.`);
+      return false;
+    }
+
+    const channelId = await findChannelIdByName(targetChannelName);
+    const mentionsText = mentionIds.map(id => `<@${id}>`).join(' ');
+    const messageText = `금일 데일리 워크로그 작성 부탁드립니다! ${mentionsText}`;
+
+    await slack.chat.postMessage({
+      channel: channelId,
+      text: messageText,
+      mrkdwn: true,
+      unfurl_links: false,
+      unfurl_media: false
+    });
+
+    console.log(`  -> 🎉 슬랙 채널(#${targetChannelName})로 일지 작성 독려 메시지 전송 성공! (멘션 대상: ${mentionIds.join(', ')})`);
+    return true;
+  } catch (error) {
+    console.error(`[Slack] 채널 독려 메시지 전송 실패:`, error.message);
+    return false;
+  }
+}
+
 module.exports = {
   findChannelIdByName,
   sendWeeklyReport,
   sendDirectMessage,
-  sendDailyReport
+  sendDailyReport,
+  findUserIdByEmail,
+  sendChannelReminder,
+  MEMBER_EMAILS
 };

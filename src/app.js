@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const notionService = require('./services/notionService');
 const analyzer = require('./services/analyzer');
 const slackService = require('./services/slackService');
+const supabaseService = require('./services/supabaseService');
 require('dotenv').config();
 
 /**
@@ -296,6 +297,81 @@ async function executeDailyPipeline(isFridayNight = false) {
   }
 }
 
+/**
+ * 매일 저녁 18:00 KST에 실행될 일지 작성 독려 파이프라인
+ */
+async function executeDailyReminderPipeline(targetDate = null) {
+  console.log(`\n==================================================`);
+  console.log(`🔔 [자동 일지 독려 트리거] ${new Date().toLocaleString()} 일지 작성 독려 파이프라인 시작 (대상일자: ${targetDate || '오늘'})`);
+  console.log(`==================================================`);
+
+  try {
+    const kstNow = getKstDate();
+    const todayStr = targetDate || kstNow.toISOString().split('T')[0];
+    
+    // 1. 공휴일 검사
+    const isHoliday = await supabaseService.checkIsHoliday(todayStr);
+    if (isHoliday) {
+      console.log(`  -> ☕ 오늘은 공휴일(${todayStr})이므로 독려 메시지 발송을 생략합니다.`);
+      return;
+    }
+
+    const members = ['김윤회', '김희승', '최현빈'];
+    
+    // 2. Supabase에서 오늘 휴가 및 출장 정보 가져오기
+    const approvedLeaves = await supabaseService.getApprovedLeaves(todayStr);
+    const approvedTrips = await supabaseService.getApprovedBusinessTrips(todayStr);
+
+    const missingLogSlackIds = [];
+
+    for (const name of members) {
+      const email = slackService.MEMBER_EMAILS[name];
+      if (!email) continue;
+
+      const leaveType = approvedLeaves[email];
+      const isTrip = approvedTrips.has(email);
+
+      // 연차, 반차, 공가 등 휴가상태이면 독려 제외 (출장자는 제외 안됨!)
+      if (leaveType) {
+        console.log(`  -> 👤 ${name} 님: 휴가 상태 (${leaveType})로 판정되어 일지 독려에서 제외합니다.`);
+        continue;
+      }
+
+      // 3. 노션 일지 조회
+      const dailyLogs = await notionService.getDailyWorkLogs(todayStr, todayStr, name);
+      const hasWrittenLog = dailyLogs && dailyLogs.length > 0;
+
+      if (!hasWrittenLog) {
+        const tripSuffix = isTrip ? ' (출장 중)' : '';
+        console.log(`  -> 👤 ${name} 님: 오늘 일지 미작성 확인${tripSuffix}. 독려 대상 등록.`);
+        
+        // 슬랙 멤버 ID 획득
+        const slackUserId = await slackService.findUserIdByEmail(email);
+        if (slackUserId) {
+          missingLogSlackIds.push(slackUserId);
+        } else {
+          console.warn(`  ⚠️ ${name} 님의 슬랙 ID를 찾을 수 없어 멘션 대상에서 제외합니다.`);
+        }
+      } else {
+        console.log(`  -> 👤 ${name} 님: 일지 작성 완료.`);
+      }
+    }
+
+    // 4. 채널로 일지 미작성자 독려 멘션 메시지 전송
+    if (missingLogSlackIds.length > 0) {
+      await slackService.sendChannelReminder({
+        mentionIds: missingLogSlackIds,
+        targetChannelName: '스마트팜-workplan'
+      });
+    } else {
+      console.log(`  -> 🎉 오늘 모든 활동 근무자가 일지를 정상적으로 작성했습니다!`);
+    }
+
+  } catch (error) {
+    console.error(`❌ 일지 작성 독려 파이프라인 중 오류 발생:`, error.message);
+  }
+}
+
 cron.schedule('0 8 * * 1', () => {
   executeWeeklyPipeline();
 }, {
@@ -311,6 +387,14 @@ cron.schedule('30 8 * * 1-5', () => {
   timezone: "Asia/Seoul"
 });
 
+// 평일(월~금요일) 저녁 18:00 (한국 시간 기준) 일지 작성 독려 멘션 배치 가동
+cron.schedule('0 18 * * 1-5', () => {
+  executeDailyReminderPipeline();
+}, {
+  scheduled: true,
+  timezone: "Asia/Seoul"
+});
+
 // 금요일 저녁 20:00 (한국 시간 기준) 금요일 당일 업무 일지 봇채팅 즉시 전송 배치 가동
 cron.schedule('0 20 * * 5', () => {
   executeDailyPipeline(true);
@@ -319,10 +403,11 @@ cron.schedule('0 20 * * 5', () => {
   timezone: "Asia/Seoul"
 });
 
-console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 08:00 (주간보고), 월~금요일 오전 08:30 (일일보고), 금요일 저녁 20:00 (금요 당일보고) 자동 배치가 가동 대기 중입니다.');
+console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 08:00 (주간보고), 월~금요일 오전 08:30 (일일보고), 월~금요일 저녁 18:00 (일지작성독려), 금요일 저녁 20:00 (금요 당일보고) 자동 배치가 가동 대기 중입니다.');
 
 module.exports = {
   getReportDateRanges,
   executeWeeklyPipeline,
-  executeDailyPipeline
+  executeDailyPipeline,
+  executeDailyReminderPipeline
 };

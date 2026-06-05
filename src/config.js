@@ -21,5 +21,9 @@ module.exports = {
       '김희승': process.env.SLACK_CANVAS_ID_HEESEUNG || '',
       '최현빈': process.env.SLACK_CANVAS_ID_HYUNBIN || ''
     }
+  },
+  supabase: {
+    url: process.env.SUPABASE_URL || 'https://qvhbigvdfyvhoegkhvef.supabase.co',
+    key: process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2aGJpZ3ZkZnl2aG9lZ2todmVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc4MTQzNjAsImV4cCI6MjA2MzM5MDM2MH0.7VZlSwnNuE0MaQpDjuzeZFgjJrDBQOWA_COyqaM8Rbg'
   }
 };

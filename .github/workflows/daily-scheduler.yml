@@ -8,6 +8,8 @@ on:
     - cron: '30 23 * * 0-4'
     # 3. 매 금요일 저녁 20:00 KST (UTC 금요일 11:00) - 금요일 저녁 즉시 보고
     - cron: '0 11 * * 5'
+    # 4. 매 평일(월~금) 저녁 18:00 KST (UTC 월~금요일 09:00) - 일지 작성 독려 멘션
+    - cron: '0 9 * * 1-5'
   workflow_dispatch:
     inputs:
       pipeline_type:
@@ -18,6 +20,7 @@ on:
         options:
           - daily-morning
           - daily-friday
+          - daily-reminder
           - weekly
 
 jobs:
@@ -54,6 +57,8 @@ jobs:
           SLACK_CANVAS_ID_YUNHUI: ${{ secrets.SLACK_CANVAS_ID_YUNHUI }}
           SLACK_CANVAS_ID_HEESEUNG: ${{ secrets.SLACK_CANVAS_ID_HEESEUNG }}
           SLACK_CANVAS_ID_HYUNBIN: ${{ secrets.SLACK_CANVAS_ID_HYUNBIN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           # 1. 수동 실행 (workflow_dispatch) 분기
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -63,6 +68,8 @@ jobs:
               node -e "require('./src/app').executeWeeklyPipeline()"
             elif [ "$TYPE" = "daily-friday" ]; then
               node -e "require('./src/app').executeDailyPipeline(true)"
+            elif [ "$TYPE" = "daily-reminder" ]; then
+              node -e "require('./src/app').executeDailyReminderPipeline()"
             else
               node -e "require('./src/app').executeDailyPipeline(false)"
             fi
@@ -77,6 +84,9 @@ jobs:
             elif [ "$CRON_TIME" = "0 11 * * 5" ]; then
               # 금요일 저녁 8시 KST
               node -e "require('./src/app').executeDailyPipeline(true)"
+            elif [ "$CRON_TIME" = "0 9 * * 1-5" ]; then
+              # 평일 저녁 6시 KST
+              node -e "require('./src/app').executeDailyReminderPipeline()"
             else
               # 평일 아침 8시 반 KST
               node -e "require('./src/app').executeDailyPipeline(false)"
