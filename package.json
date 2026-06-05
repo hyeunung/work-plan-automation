@@ -1,0 +1,20 @@
+{
+  "name": "work-plan-automation",
+  "version": "1.0.0",
+  "description": "Notion & Slack 주간 업무보고 및 자동 ✅ 마킹 시스템",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "test-run": "node test-run.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "@slack/web-api": "^7.1.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": true
+}

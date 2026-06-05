@@ -1,0 +1,505 @@
+{
+  "weeklyPlan": {
+    "id": "36bc640c-cca4-80d5-b0d1-e7171d54f184",
+    "title": "Weekly Plan",
+    "is_inline": true,
+    "properties": {
+      "메모": {
+        "id": "I%5DxB",
+        "name": "메모",
+        "description": null,
+        "type": "rich_text",
+        "rich_text": {}
+      },
+      "작성자": {
+        "id": "VRQP",
+        "name": "작성자",
+        "description": null,
+        "type": "relation",
+        "relation": {
+          "database_id": "4b7c640c-cca4-82ba-99cc-817c501e7fa4",
+          "data_source_id": "ae3c640c-cca4-837d-8f6a-0742d6993631",
+          "type": "single_property",
+          "single_property": {}
+        }
+      },
+      "Week": {
+        "id": "WkD%3F",
+        "name": "Week",
+        "description": null,
+        "type": "formula",
+        "formula": {
+          "expression": "((((format(year({{notion:block_property:d%5Dif:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}})) + \"년 \") + format(month({{notion:block_property:d%5Dif:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}) - 1 + 1)) + \"월 \") + format(ceil(date({{notion:block_property:d%5Dif:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}) / 7))) + \"주차\""
+        }
+      },
+      "Week Start": {
+        "id": "d%5Dif",
+        "name": "Week Start",
+        "description": null,
+        "type": "date",
+        "date": {}
+      },
+      "할 일": {
+        "id": "jg%60a",
+        "name": "할 일",
+        "description": null,
+        "type": "rich_text",
+        "rich_text": {}
+      },
+      "...": {
+        "id": "title",
+        "name": "...",
+        "description": null,
+        "type": "title",
+        "title": {}
+      }
+    },
+    "parent": {
+      "type": "page_id",
+      "page_id": "ce9c640c-cca4-839c-a2f2-01920e2e60ec"
+    }
+  },
+  "dailyWorkLog": {
+    "id": "1c3c640c-cca4-8370-9509-019c4a379b92",
+    "title": "Daily Work Log",
+    "is_inline": false,
+    "properties": {
+      "생성 일시": {
+        "id": "%3BUb%60",
+        "name": "생성 일시",
+        "description": null,
+        "type": "created_time",
+        "created_time": {}
+      },
+      "관련 Project(자동)": {
+        "id": "HBPZ",
+        "name": "관련 Project(자동)",
+        "description": null,
+        "type": "rollup",
+        "rollup": {
+          "rollup_property_name": "Project",
+          "relation_property_name": "관련 Task",
+          "rollup_property_id": "dIhf",
+          "relation_property_id": "{Mil",
+          "function": "show_original"
+        }
+      },
+      "수식": {
+        "id": "cZjN",
+        "name": "수식",
+        "description": null,
+        "type": "formula",
+        "formula": {
+          "expression": "if(empty({{notion:block_property:hK%40P:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}),\n  \"날짜 없음\",\n  /* Extract month and calculate week number */\n  format(month({{notion:block_property:hK%40P:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}})) + \"월 \" + \n  format(ceil(date({{notion:block_property:hK%40P:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}) / 7)) + \"주차\"\n)"
+        }
+      },
+      "담당자": {
+        "id": "c%5C%3AF",
+        "name": "담당자",
+        "description": null,
+        "type": "relation",
+        "relation": {
+          "database_id": "4b7c640c-cca4-82ba-99cc-817c501e7fa4",
+          "data_source_id": "ae3c640c-cca4-837d-8f6a-0742d6993631",
+          "type": "single_property",
+          "single_property": {}
+        }
+      },
+      "업무일": {
+        "id": "hK%40P",
+        "name": "업무일",
+        "description": null,
+        "type": "date",
+        "date": {}
+      },
+      "문제점·이슈": {
+        "id": "hpq%7D",
+        "name": "문제점·이슈",
+        "description": null,
+        "type": "rich_text",
+        "rich_text": {}
+      },
+      "관련 Task": {
+        "id": "%7BMil",
+        "name": "관련 Task",
+        "description": null,
+        "type": "relation",
+        "relation": {
+          "database_id": "7eec640c-cca4-82a5-aba5-81fe3b052b93",
+          "data_source_id": "588c640c-cca4-83fc-aebf-870a86fab09f",
+          "type": "single_property",
+          "single_property": {}
+        }
+      },
+      "업무": {
+        "id": "title",
+        "name": "업무",
+        "description": null,
+        "type": "title",
+        "title": {}
+      }
+    },
+    "parent": {
+      "type": "block_id",
+      "block_id": "7c2c640c-cca4-830d-ae59-81cd27c6713c"
+    }
+  },
+  "tasks": {
+    "id": "7eec640c-cca4-82a5-aba5-81fe3b052b93",
+    "title": "Tasks",
+    "is_inline": false,
+    "properties": {
+      "담당자": {
+        "id": "%40%5Bng",
+        "name": "담당자",
+        "description": null,
+        "type": "relation",
+        "relation": {
+          "database_id": "4b7c640c-cca4-82ba-99cc-817c501e7fa4",
+          "data_source_id": "ae3c640c-cca4-837d-8f6a-0742d6993631",
+          "type": "single_property",
+          "single_property": {}
+        }
+      },
+      "진행 상황": {
+        "id": "FfB%3D",
+        "name": "진행 상황",
+        "description": null,
+        "type": "status",
+        "status": {
+          "options": [
+            {
+              "id": "^I[U",
+              "name": "⏸️ 대기",
+              "color": "gray",
+              "description": null
+            },
+            {
+              "id": "[w=;",
+              "name": "🙏 진행 예정",
+              "color": "default",
+              "description": null
+            },
+            {
+              "id": "\\=Jo",
+              "name": "🚀 진행 중",
+              "color": "yellow",
+              "description": null
+            },
+            {
+              "id": "WQLJ",
+              "name": "💡 피드백",
+              "color": "purple",
+              "description": null
+            },
+            {
+              "id": "VBb:",
+              "name": "✅ 완료",
+              "color": "green",
+              "description": null
+            },
+            {
+              "id": "e]=O",
+              "name": "⏭ 보류",
+              "color": "gray",
+              "description": null
+            }
+          ],
+          "groups": [
+            {
+              "id": "428e99fe-1feb-4254-9499-5f01b7f192c3",
+              "name": "To-do",
+              "color": "gray",
+              "option_ids": [
+                "^I[U",
+                "[w=;"
+              ]
+            },
+            {
+              "id": "a8f0574c-8a02-4815-bc53-da4f7ff8a043",
+              "name": "In progress",
+              "color": "blue",
+              "option_ids": [
+                "\\=Jo",
+                "WQLJ"
+              ]
+            },
+            {
+              "id": "c4351f16-fe46-48e1-a8e3-8de512d8b10a",
+              "name": "Complete",
+              "color": "green",
+              "option_ids": [
+                "VBb:",
+                "e]=O"
+              ]
+            }
+          ]
+        }
+      },
+      "Project": {
+        "id": "dIhf",
+        "name": "Project",
+        "description": null,
+        "type": "relation",
+        "relation": {
+          "database_id": "d24c640c-cca4-8278-b12e-81dc5c4e7a51",
+          "data_source_id": "355c640c-cca4-82aa-bfec-07a8f6cd97e7",
+          "type": "dual_property",
+          "dual_property": {
+            "synced_property_name": "Tasks DB",
+            "synced_property_id": "H~fz"
+          }
+        }
+      },
+      "마감일": {
+        "id": "hwuo",
+        "name": "마감일",
+        "description": null,
+        "type": "formula",
+        "formula": {
+          "expression": "if({{notion:block_property:FfB%3D:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}} == \"✅ 완료\",\n  /* Show checkmark when task is complete */\n  \"✅\",\n  if(empty({{notion:block_property:umob:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}),\n    \"날짜 없음\",\n    lets(\n      /* Extract end date from date range and calculate days remaining */\n      endDate, dateEnd({{notion:block_property:umob:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}),\n      daysRemaining, dateBetween(endDate, now(), \"days\"),\n      /* Format as D-day notation */\n      ifs(\n        daysRemaining > 0, \"D-\" + format(daysRemaining),\n        daysRemaining == 0, \"D-Day\",\n        \"D+\" + format(abs(daysRemaining))\n      )\n    )\n  )\n)"
+        }
+      },
+      "마감일자": {
+        "id": "umob",
+        "name": "마감일자",
+        "description": null,
+        "type": "date",
+        "date": {}
+      },
+      "Task": {
+        "id": "title",
+        "name": "Task",
+        "description": null,
+        "type": "title",
+        "title": {}
+      }
+    },
+    "parent": {
+      "type": "block_id",
+      "block_id": "7c2c640c-cca4-830d-ae59-81cd27c6713c"
+    }
+  },
+  "teamMembers": {
+    "id": "4b7c640c-cca4-82ba-99cc-817c501e7fa4",
+    "title": "Team Members",
+    "is_inline": false,
+    "properties": {
+      "파일과 미디어": {
+        "id": "Q~~v",
+        "name": "파일과 미디어",
+        "description": null,
+        "type": "files",
+        "files": {}
+      },
+      "이름": {
+        "id": "title",
+        "name": "이름",
+        "description": null,
+        "type": "title",
+        "title": {}
+      }
+    },
+    "parent": {
+      "type": "block_id",
+      "block_id": "7c2c640c-cca4-830d-ae59-81cd27c6713c"
+    }
+  },
+  "projects": {
+    "id": "d24c640c-cca4-8278-b12e-81dc5c4e7a51",
+    "title": "Projects",
+    "is_inline": false,
+    "properties": {
+      "진행률": {
+        "id": "%3FCuq",
+        "name": "진행률",
+        "description": null,
+        "type": "rollup",
+        "rollup": {
+          "rollup_property_name": "진행 상황",
+          "relation_property_name": "Tasks DB",
+          "rollup_property_id": "FfB=",
+          "relation_property_id": "H~fz",
+          "function": "percent_per_group"
+        }
+      },
+      "PM": {
+        "id": "%40%5Bng",
+        "name": "PM",
+        "description": null,
+        "type": "relation",
+        "relation": {
+          "database_id": "4b7c640c-cca4-82ba-99cc-817c501e7fa4",
+          "data_source_id": "ae3c640c-cca4-837d-8f6a-0742d6993631",
+          "type": "single_property",
+          "single_property": {}
+        }
+      },
+      "Tasks DB": {
+        "id": "H~fz",
+        "name": "Tasks DB",
+        "description": null,
+        "type": "relation",
+        "relation": {
+          "database_id": "7eec640c-cca4-82a5-aba5-81fe3b052b93",
+          "data_source_id": "588c640c-cca4-83fc-aebf-870a86fab09f",
+          "type": "dual_property",
+          "dual_property": {
+            "synced_property_name": "Project",
+            "synced_property_id": "dIhf"
+          }
+        }
+      },
+      "image": {
+        "id": "I%7Czr",
+        "name": "image",
+        "description": null,
+        "type": "files",
+        "files": {}
+      },
+      "프로젝트 기간": {
+        "id": "J%7DOg",
+        "name": "프로젝트 기간",
+        "description": null,
+        "type": "date",
+        "date": {}
+      },
+      "소요 기간": {
+        "id": "%5DIvI",
+        "name": "소요 기간",
+        "description": null,
+        "type": "formula",
+        "formula": {
+          "expression": "dateBetween(dateEnd({{notion:block_property:J%7DOg:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}), dateStart({{notion:block_property:J%7DOg:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}), \"days\")"
+        }
+      },
+      "진행 상황": {
+        "id": "ghsY",
+        "name": "진행 상황",
+        "description": null,
+        "type": "status",
+        "status": {
+          "options": [
+            {
+              "id": "32c02a80-7e68-4072-9109-132dd743168f",
+              "name": "시작 전",
+              "color": "default",
+              "description": null
+            },
+            {
+              "id": "y??r",
+              "name": "⏸️ 보류",
+              "color": "yellow",
+              "description": null
+            },
+            {
+              "id": "98338c13-5b0a-4ae2-b57f-122e49e10f0f",
+              "name": "🚀 진행 중",
+              "color": "blue",
+              "description": null
+            },
+            {
+              "id": "f4f41542-20c4-41a8-a718-e67cb286891f",
+              "name": "✅ 완료",
+              "color": "green",
+              "description": null
+            }
+          ],
+          "groups": [
+            {
+              "id": "c92197a7-4fc2-415a-a7f3-71f622596011",
+              "name": "To-do",
+              "color": "gray",
+              "option_ids": [
+                "y??r",
+                "32c02a80-7e68-4072-9109-132dd743168f"
+              ]
+            },
+            {
+              "id": "0ce6c98d-2e29-4c64-a32d-39fedd7af187",
+              "name": "In progress",
+              "color": "blue",
+              "option_ids": [
+                "98338c13-5b0a-4ae2-b57f-122e49e10f0f"
+              ]
+            },
+            {
+              "id": "510d67e1-756f-4ec0-9dae-24975d2dc654",
+              "name": "Complete",
+              "color": "green",
+              "option_ids": [
+                "f4f41542-20c4-41a8-a718-e67cb286891f"
+              ]
+            }
+          ]
+        }
+      },
+      "남은 기간": {
+        "id": "izsy",
+        "name": "남은 기간",
+        "description": null,
+        "type": "formula",
+        "formula": {
+          "expression": "dateBetween(dateEnd({{notion:block_property:J%7DOg:00000000-0000-0000-0000-000000000000:f663dcac-2c02-4b21-bfc5-5d78fa4ad10d}}), now(), \"days\")"
+        }
+      },
+      "선택": {
+        "id": "%7C%7COS",
+        "name": "선택",
+        "description": null,
+        "type": "select",
+        "select": {
+          "options": [
+            {
+              "id": "de7c5f9f-51d3-489a-a257-e51be080e370",
+              "name": "무인대차",
+              "color": "brown",
+              "description": null
+            },
+            {
+              "id": "0c123c74-73e7-4d30-b3fe-a5a1f9f9825f",
+              "name": "자동화설비",
+              "color": "red",
+              "description": null
+            },
+            {
+              "id": "1fd1d4f2-1818-435e-b2a0-a92b4942bbcf",
+              "name": "스마트팜시스템",
+              "color": "default",
+              "description": null
+            },
+            {
+              "id": "34cc5e83-24e9-4829-bfe4-ab1c0da846fe",
+              "name": "생육모델링",
+              "color": "green",
+              "description": null
+            },
+            {
+              "id": "59bd0dad-b90b-42a6-a141-a75f4f553d5e",
+              "name": "기타",
+              "color": "gray",
+              "description": null
+            },
+            {
+              "id": "689ce587-f663-408a-ac0b-e57e2b39af89",
+              "name": "유선드론",
+              "color": "yellow",
+              "description": null
+            }
+          ]
+        }
+      },
+      "프로젝트 명": {
+        "id": "title",
+        "name": "프로젝트 명",
+        "description": null,
+        "type": "title",
+        "title": {}
+      }
+    },
+    "parent": {
+      "type": "block_id",
+      "block_id": "7c2c640c-cca4-830d-ae59-81cd27c6713c"
+    }
+  }
+}
