@@ -5,20 +5,31 @@ const config = require('../config');
  */
 async function supabaseFetch(path) {
   const url = `${config.supabase.url}${path}`;
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'apikey': config.supabase.key,
-      'Authorization': `Bearer ${config.supabase.key}`,
-      'Content-Type': 'application/json'
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'apikey': config.supabase.key,
+        'Authorization': `Bearer ${config.supabase.key}`,
+        'Content-Type': 'application/json'
+      },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Supabase API request failed: ${response.status} ${response.statusText}`);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error(`Supabase API request failed: ${response.status} ${response.statusText}`);
+    return await response.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
   }
-
-  return await response.json();
 }
 
 /**
