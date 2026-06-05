@@ -3,6 +3,7 @@ const notionService = require('./services/notionService');
 const analyzer = require('./services/analyzer');
 const slackService = require('./services/slackService');
 const supabaseService = require('./services/supabaseService');
+const config = require('./config');
 require('dotenv').config();
 
 /**
@@ -372,38 +373,40 @@ async function executeDailyReminderPipeline(targetDate = null) {
   }
 }
 
-cron.schedule('0 8 * * 1', () => {
-  executeWeeklyPipeline();
-}, {
-  scheduled: true,
-  timezone: "Asia/Seoul" // 무조건 한국 서울 시간 기준으로 매주 월요일 오전 08:00에 칼같이 가동!
-});
+if (require.main === module) {
+  cron.schedule('0 8 * * 1', () => {
+    executeWeeklyPipeline();
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul" // 무조건 한국 서울 시간 기준으로 매주 월요일 오전 08:00에 칼같이 가동!
+  });
 
-// 평일(월~금요일) 아침 08:30 (한국 시간 기준) 일일 업무 일지 봇채팅 전송 배치 가동
-cron.schedule('30 8 * * 1-5', () => {
-  executeDailyPipeline(false);
-}, {
-  scheduled: true,
-  timezone: "Asia/Seoul"
-});
+  // 평일(월~금요일) 아침 08:30 (한국 시간 기준) 일일 업무 일지 봇채팅 전송 배치 가동
+  cron.schedule('30 8 * * 1-5', () => {
+    executeDailyPipeline(false);
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
 
-// 평일(월~금요일) 저녁 18:00 (한국 시간 기준) 일지 작성 독려 멘션 배치 가동
-cron.schedule('0 18 * * 1-5', () => {
-  executeDailyReminderPipeline();
-}, {
-  scheduled: true,
-  timezone: "Asia/Seoul"
-});
+  // 평일(월~금요일) 저녁 18:00 (한국 시간 기준) 일지 작성 독려 멘션 배치 가동
+  cron.schedule('0 18 * * 1-5', () => {
+    executeDailyReminderPipeline();
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
 
-// 금요일 저녁 20:00 (한국 시간 기준) 금요일 당일 업무 일지 봇채팅 즉시 전송 배치 가동
-cron.schedule('0 20 * * 5', () => {
-  executeDailyPipeline(true);
-}, {
-  scheduled: true,
-  timezone: "Asia/Seoul"
-});
+  // 금요일 저녁 20:00 (한국 시간 기준) 금요일 당일 업무 일지 봇채팅 즉시 전송 배치 가동
+  cron.schedule('0 20 * * 5', () => {
+    executeDailyPipeline(true);
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
 
-console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 08:00 (주간보고), 월~금요일 오전 08:30 (일일보고), 월~금요일 저녁 18:00 (일지작성독려), 금요일 저녁 20:00 (금요 당일보고) 자동 배치가 가동 대기 중입니다.');
+  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 08:00 (주간보고), 월~금요일 오전 08:30 (일일보고), 월~금요일 저녁 18:00 (일지작성독려), 금요일 저녁 20:00 (금요 당일보고) 자동 배치가 가동 대기 중입니다.');
+}
 
 module.exports = {
   getReportDateRanges,
