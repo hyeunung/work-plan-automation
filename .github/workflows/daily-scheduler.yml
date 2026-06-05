@@ -1,0 +1,101 @@
+name: HANSL Notion & Slack Automation Scheduler
+
+on:
+  schedule:
+    # 1. 매주 월요일 아침 08:00 KST (UTC 일요일 23:00) - 주간 보고 분석
+    - cron: '0 23 * * 0'
+    # 2. 매 평일(월~금) 아침 08:30 KST (UTC 일~목요일 23:30) - 평일 아침 일일 보고
+    - cron: '30 23 * * 0-4'
+    # 3. 매 금요일 저녁 20:00 KST (UTC 금요일 11:00) - 금요일 저녁 즉시 보고
+    - cron: '0 11 * * 5'
+  workflow_dispatch:
+    inputs:
+      pipeline_type:
+        description: '실행할 파이프라인 타입을 선택하세요.'
+        required: true
+        default: 'daily-morning'
+        type: choice
+        options:
+          - daily-morning
+          - daily-friday
+          - weekly
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 깃허브 저장소에 MD 파일을 자동으로 커밋/푸시하기 위해 쓰기 권한 활성화
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Automation Pipeline
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_WEEKLY_PLAN_DB_ID: ${{ secrets.NOTION_WEEKLY_PLAN_DB_ID }}
+          NOTION_DAILY_WORK_LOG_DB_ID: ${{ secrets.NOTION_DAILY_WORK_LOG_DB_ID }}
+          NOTION_TASKS_DB_ID: ${{ secrets.NOTION_TASKS_DB_ID }}
+          NOTION_TEAM_MEMBERS_DB_ID: ${{ secrets.NOTION_TEAM_MEMBERS_DB_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_TOKEN: ${{ secrets.SLACK_USER_TOKEN }}
+          SLACK_TEAM_ID: ${{ secrets.SLACK_TEAM_ID }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SLACK_ADMIN_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
+          SLACK_CANVAS_ID_YUNHUI: ${{ secrets.SLACK_CANVAS_ID_YUNHUI }}
+          SLACK_CANVAS_ID_HEESEUNG: ${{ secrets.SLACK_CANVAS_ID_HEESEUNG }}
+          SLACK_CANVAS_ID_HYUNBIN: ${{ secrets.SLACK_CANVAS_ID_HYUNBIN }}
+        run: |
+          # 1. 수동 실행 (workflow_dispatch) 분기
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TYPE="${{ github.event.inputs.pipeline_type }}"
+            echo "🚀 [수동 실행] 선택된 파이프라인: $TYPE"
+            if [ "$TYPE" = "weekly" ]; then
+              node -e "require('./src/app').executeWeeklyPipeline()"
+            elif [ "$TYPE" = "daily-friday" ]; then
+              node -e "require('./src/app').executeDailyPipeline(true)"
+            else
+              node -e "require('./src/app').executeDailyPipeline(false)"
+            fi
+          
+          # 2. 자동 스케줄러 분기 (cron 시간에 따른 판별)
+          else
+            CRON_TIME="${{ github.event.schedule }}"
+            echo "⏰ [자동 스케줄 트리거] Cron 스펙: $CRON_TIME"
+            if [ "$CRON_TIME" = "0 23 * * 0" ]; then
+              # 월요일 아침 8시 KST
+              node -e "require('./src/app').executeWeeklyPipeline()"
+            elif [ "$CRON_TIME" = "0 11 * * 5" ]; then
+              # 금요일 저녁 8시 KST
+              node -e "require('./src/app').executeDailyPipeline(true)"
+            else
+              # 평일 아침 8시 반 KST
+              node -e "require('./src/app').executeDailyPipeline(false)"
+            fi
+          fi
+
+      - name: Commit and Push Archived Reports
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # 생성된 docs/ 폴더가 있다면 트래킹 추가
+          git add docs/ || true
+          
+          # 변경사항이 있는 경우에만 커밋/푸시 진행
+          if git diff --cached --quiet; then
+            echo "📝 새롭게 저장할 마크다운 보고서가 없습니다."
+          else
+            echo "📝 새 마크다운 보고서를 깃허브 저장소에 기록합니다."
+            git commit -m "chore: [자동 아카이브] 일일/주간 업무 보고서 보존"
+            git push
+          fi

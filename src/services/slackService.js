@@ -368,7 +368,7 @@ async function updateWeeklyReportCanvas({ canvasId, weekTitle, nextWeekTitle, me
         }
         const cleanMemberName = memberName.replace(' 님', '').trim();
         const safeWeekTitle = weekTitle.replace(/\s+/g, '');
-        const filename = `${startDate}-${cleanMemberName}-${safeWeekTitle}.md`;
+        const filename = `${safeWeekTitle}_${cleanMemberName}.md`;
         const savePath = path.join(reportDir, filename);
         
         fs.writeFileSync(savePath, markdownContent, 'utf8');
@@ -907,7 +907,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
       if (!fs.existsSync(reportDir)) {
         fs.mkdirSync(reportDir, { recursive: true });
       }
-      const filename = `${date}-일일보고.md`;
+      const filename = `${date}.md`;
       const savePath = path.join(reportDir, filename);
       
       fs.writeFileSync(savePath, dailyArchiveContent, 'utf8');
