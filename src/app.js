@@ -351,11 +351,11 @@ async function executeDailyReminderPipeline(targetDate = null) {
 }
 
 if (require.main === module) {
-  cron.schedule('0 8 * * 1', () => {
+  cron.schedule('0 9 * * 1', () => {
     executeWeeklyPipeline();
   }, {
     scheduled: true,
-    timezone: "Asia/Seoul" // 무조건 한국 서울 시간 기준으로 매주 월요일 오전 08:00에 칼같이 가동!
+    timezone: "Asia/Seoul" // 무조건 한국 서울 시간 기준으로 매주 월요일 오전 09:00에 칼같이 가동!
   });
 
   // 평일(월~금요일) 저녁 19:00 (한국 시간 기준) 일일 업무 일지 봇채팅 전송 배치 가동
@@ -374,7 +374,7 @@ if (require.main === module) {
     timezone: "Asia/Seoul"
   });
 
-  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 08:00 (주간보고), 월~금요일 저녁 18:00 (일지작성독려), 월~금요일 저녁 19:00 (일일보고) 자동 배치가 가동 대기 중입니다.');
+  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 09:00 (주간보고), 월~금요일 저녁 18:00 (일지작성독려), 월~금요일 저녁 19:00 (일일보고) 자동 배치가 가동 대기 중입니다.');
 }
 
 module.exports = {

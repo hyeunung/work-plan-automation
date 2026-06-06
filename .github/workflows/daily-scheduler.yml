@@ -2,8 +2,8 @@ name: HANSL Notion & Slack Automation Scheduler
 
 on:
   schedule:
-    # 1. 매주 월요일 아침 08:00 KST (UTC 일요일 23:00) - 주간 보고 분석
-    - cron: '0 23 * * 0'
+    # 1. 매주 월요일 아침 09:00 KST (UTC 월요일 00:00) - 주간 보고 분석
+    - cron: '0 0 * * 1'
     # 2. 매 평일(월~금) 저녁 19:00 KST (UTC 월~금요일 10:00) - 평일 저녁 일일 보고
     - cron: '0 10 * * 1-5'
     # 3. 매 평일(월~금) 저녁 18:00 KST (UTC 월~금요일 09:00) - 일지 작성 독려 멘션
@@ -74,8 +74,8 @@ jobs:
           else
             CRON_TIME="${{ github.event.schedule }}"
             echo "⏰ [자동 스케줄 트리거] Cron 스펙: $CRON_TIME"
-            if [ "$CRON_TIME" = "0 23 * * 0" ]; then
-              # 월요일 아침 8시 KST
+            if [ "$CRON_TIME" = "0 0 * * 1" ]; then
+              # 월요일 아침 9시 KST
               node -e "require('./src/app').executeWeeklyPipeline()"
             elif [ "$CRON_TIME" = "0 9 * * 1-5" ]; then
               # 평일 저녁 6시 KST
