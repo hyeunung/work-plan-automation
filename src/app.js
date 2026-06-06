@@ -182,12 +182,11 @@ async function executeWeeklyPipeline() {
 }
 
 /**
- * 매일 실행될 일일 업무 보고 취합 및 DM 전송 파이프라인
- * @param {boolean} isFridayNight 금요일 저녁 20:00 가동 여부
+ * 매일 실행될 일일 업무 보고 취합 및 DM 전송 파이프라인 (저녁 19:00 KST 가동)
  */
-async function executeDailyPipeline(isFridayNight = false) {
+async function executeDailyPipeline() {
   console.log(`\n==================================================`);
-  console.log(`🔔 [자동 일일 스케줄 트리거] ${new Date().toLocaleString()} 일일 업무 보고 파이프라인 시작 (금요일 저녁 모드: ${isFridayNight})`);
+  console.log(`🔔 [자동 일일 스케줄 트리거] ${new Date().toLocaleString()} 일일 업무 보고 파이프라인 시작 (저녁 19:00 모드)`);
   console.log(`==================================================`);
 
   const members = ['김윤회', '김희승', '최현빈'];
@@ -199,45 +198,23 @@ async function executeDailyPipeline(isFridayNight = false) {
   let startDate = todayStr;
   let endDate = todayStr;
 
-  if (isFridayNight) {
-    // 1. 금요일 저녁 20시 발송: 금요일 당일 하루 실적 수집
+  const day = kstNow.getDay(); // 0: 일, 1: 월, 2: 화, 3: 수, 4: 목, 5: 금, 6: 토
+  
+  if (day === 1) {
+    // 월요일 저녁: 지난 주말(토 ~ 일) 및 월요일 당일까지 포함하여 3일간 실적 수집
+    const sat = new Date(kstNow);
+    sat.setDate(kstNow.getDate() - 2);
+    
+    startDate = sat.toISOString().split('T')[0];
+    endDate = todayStr;
+    console.log(`- 수집 모드: 월요일 저녁 주말 포함 실적 보고 (기간: ${startDate} ~ ${endDate})`);
+  } else {
+    // 화 ~ 금요일 저녁: 당일(오늘) 하루 실적 즉시 보고
     startDate = todayStr;
     endDate = todayStr;
-    console.log(`- 수집 모드: 금요일 당일 실적 즉시 보고 (${todayStr})`);
-  } else {
-    // 2. 평일 아침 08:30 발송: 전날 하루 실적 수집
-    const day = kstNow.getDay(); // 0: 일, 1: 월, 2: 화, 3: 수, 4: 목, 5: 금, 6: 토
-    
-    if (day === 1) {
-      // 월요일 아침: 지난 주말 (토 ~ 일) 2일간 실적 수집 (금요일은 금요일 저녁 8시에 이미 보고됨!)
-      const sat = new Date(kstNow);
-      sat.setDate(kstNow.getDate() - 2);
-      const sun = new Date(kstNow);
-      sun.setDate(kstNow.getDate() - 1);
-      
-      startDate = sat.toISOString().split('T')[0];
-      endDate = sun.toISOString().split('T')[0];
-      console.log(`- 수집 모드: 월요일 아침 주말 실적 보고 (기간: ${startDate} ~ ${endDate})`);
-    } else if (day >= 2 && day <= 5) {
-      // 화 ~ 금요일 아침: 전날(어제) 하루 실적 수집
-      const yesterday = new Date(kstNow);
-      yesterday.setDate(kstNow.getDate() - 1);
-      
-      const yesterdayStr = yesterday.toISOString().split('T')[0];
-      startDate = yesterdayStr;
-      endDate = yesterdayStr;
-      console.log(`- 수집 모드: 평일 아침 전날 실적 보고 (어제자: ${startDate})`);
-    } else {
-      // 주말 아침 (토, 일): 스케줄러상으로는 돌지 않으나, 수동 구동 등을 대비해 어제 하루로 폴백
-      const yesterday = new Date(kstNow);
-      yesterday.setDate(kstNow.getDate() - 1);
-      
-      const yesterdayStr = yesterday.toISOString().split('T')[0];
-      startDate = yesterdayStr;
-      endDate = yesterdayStr;
-      console.log(`- 수집 모드: 주말 아침 전날 실적 보고 (어제자: ${startDate})`);
-    }
+    console.log(`- 수집 모드: 평일 저녁 당일 실적 보고 (오늘자: ${startDate})`);
   }
+
 
   // 1단계: 대상 슬랙 유저 ID 동적 추출 (정현웅 님 ID)
   let targetUserId = config.slack.adminUserId || 'U0B1U11SBE2';
@@ -381,9 +358,9 @@ if (require.main === module) {
     timezone: "Asia/Seoul" // 무조건 한국 서울 시간 기준으로 매주 월요일 오전 08:00에 칼같이 가동!
   });
 
-  // 평일(월~금요일) 아침 08:30 (한국 시간 기준) 일일 업무 일지 봇채팅 전송 배치 가동
-  cron.schedule('30 8 * * 1-5', () => {
-    executeDailyPipeline(false);
+  // 평일(월~금요일) 저녁 19:00 (한국 시간 기준) 일일 업무 일지 봇채팅 전송 배치 가동
+  cron.schedule('0 19 * * 1-5', () => {
+    executeDailyPipeline();
   }, {
     scheduled: true,
     timezone: "Asia/Seoul"
@@ -397,15 +374,7 @@ if (require.main === module) {
     timezone: "Asia/Seoul"
   });
 
-  // 금요일 저녁 20:00 (한국 시간 기준) 금요일 당일 업무 일지 봇채팅 즉시 전송 배치 가동
-  cron.schedule('0 20 * * 5', () => {
-    executeDailyPipeline(true);
-  }, {
-    scheduled: true,
-    timezone: "Asia/Seoul"
-  });
-
-  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 08:00 (주간보고), 월~금요일 오전 08:30 (일일보고), 월~금요일 저녁 18:00 (일지작성독려), 금요일 저녁 20:00 (금요 당일보고) 자동 배치가 가동 대기 중입니다.');
+  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 08:00 (주간보고), 월~금요일 저녁 18:00 (일지작성독려), 월~금요일 저녁 19:00 (일일보고) 자동 배치가 가동 대기 중입니다.');
 }
 
 module.exports = {
