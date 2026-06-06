@@ -91,8 +91,65 @@ async function getApprovedBusinessTrips(date) {
   }
 }
 
+/**
+ * 외부 이미지 URL을 다운로드하여 Supabase Storage 'workplan' 버킷에 업로드하고, 영구 Public URL을 반환합니다.
+ */
+async function uploadImageToStorage(imageUrl) {
+  try {
+    // 1. 이미지 다운로드
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    // 확장자 유추
+    let ext = 'png';
+    if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = 'jpg';
+    else if (contentType.includes('gif')) ext = 'gif';
+    else if (contentType.includes('webp')) ext = 'webp';
+    else if (contentType.includes('svg')) ext = 'svg';
+
+    // 고유 파일명 생성
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 9);
+    const fileName = `workplan-logs/${timestamp}_${randomSuffix}.${ext}`;
+    
+    // 2. Supabase Storage API로 업로드 (POST /storage/v1/object/workplan/filePath)
+    const uploadUrl = `${config.supabase.url}/storage/v1/object/workplan/${fileName}`;
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'apikey': config.supabase.key,
+        'Authorization': `Bearer ${config.supabase.key}`,
+        'Content-Type': contentType,
+        'x-upsert': 'true'
+      },
+      body: buffer
+    });
+    
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      throw new Error(`Supabase Storage upload failed: ${uploadResponse.status} ${errorText}`);
+    }
+    
+    // 3. 영구 Public URL 생성 및 리턴
+    const publicUrl = `${config.supabase.url}/storage/v1/object/public/workplan/${fileName}`;
+    console.log(`[Supabase Storage] 이미지 업로드 성공: ${imageUrl} -> ${publicUrl}`);
+    return publicUrl;
+  } catch (error) {
+    console.error(`[Supabase Storage] 이미지 업로드 실패 (원본 URL 유지):`, error.message);
+    return imageUrl; // 실패 시 원본 임시 URL 유지
+  }
+}
+
 module.exports = {
   checkIsHoliday,
   getApprovedLeaves,
-  getApprovedBusinessTrips
+  getApprovedBusinessTrips,
+  uploadImageToStorage
 };
+

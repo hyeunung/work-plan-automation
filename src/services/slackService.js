@@ -65,6 +65,33 @@ async function getShortUrl(longUrl) {
 }
 
 /**
+ * 이미지 URL을 Supabase Storage에 백업 업로드하여 영구적인 Public URL을 반환합니다.
+ * 업로드 실패 시 TinyURL 단축 주소로 fallback 합니다.
+ */
+async function getPermanentImageUrl(longUrl) {
+  if (!longUrl) return '';
+  
+  // 이미 Supabase Storage workplan 버킷 경로라면 그대로 반환
+  if (longUrl.includes('supabase.co/storage/v1/object/public/workplan')) {
+    return longUrl;
+  }
+  
+  try {
+    const permanentUrl = await supabaseService.uploadImageToStorage(longUrl);
+    // 업로드 실패 시 원본 URL이 반환되므로, 이 경우 TinyURL 단축 적용
+    if (permanentUrl === longUrl) {
+      console.warn('[Slack Service] Supabase 이미지 업로드 실패, TinyURL 단축을 적용합니다.');
+      return await getShortUrl(longUrl);
+    }
+    return permanentUrl;
+  } catch (error) {
+    console.error('[Slack Service] 영구 이미지 URL 변환 중 예외 발생:', error.message);
+    return await getShortUrl(longUrl);
+  }
+}
+
+
+/**
  * 날짜 문자열을 받아 요일을 포함한 형식으로 변환합니다.
  */
 function formatDayLabel(dateStr) {
@@ -667,7 +694,7 @@ async function formatLinksInText(text, collectImageUrls = null) {
 
   for (const m of mdMatches) {
     if (isImageUrl(m.url) || m.label.includes('이미지') || m.label.includes('사진')) {
-      const shortUrl = await getShortUrl(m.url);
+      const shortUrl = await getPermanentImageUrl(m.url);
       if (collectImageUrls) {
         collectImageUrls.push({ url: m.url, shortUrl, label: m.label });
       }
@@ -700,7 +727,7 @@ async function formatLinksInText(text, collectImageUrls = null) {
 
   for (const m of rawMatches) {
     if (isImageUrl(m.url)) {
-      const shortUrl = await getShortUrl(m.url);
+      const shortUrl = await getPermanentImageUrl(m.url);
       if (collectImageUrls) {
         collectImageUrls.push({ url: m.url, shortUrl, label: '이미지 첨부' });
       }
@@ -876,7 +903,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
             // 이미지가 존재하는 경우 본문 바로 밑에 image 블록을 배치
             // 한슬 앱은 단일 메시지(section + image)를 인식해 자동으로 (파일크기) ▼ 파일 토글을 생성함
             for (const img of logImages) {
-              const shortUrl = img.shortUrl || await getShortUrl(img.url);
+              const shortUrl = img.shortUrl || await getPermanentImageUrl(img.url);
               
               // 깃허브 아카이브용 마크다운에도 이미지 렌더링 태그 추가
               dailyArchiveContent += `\n![${img.label || '이미지 첨부'}](${shortUrl})\n`;
