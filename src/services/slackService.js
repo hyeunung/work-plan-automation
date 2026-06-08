@@ -380,6 +380,26 @@ async function updateWeeklyReportCanvas({ canvasId, weekTitle, nextWeekTitle, me
     console.log(`  -> 수동 개설된 캔버스(${canvasId})에 '${cleanMemberName} 님'의 리포트를 실시간 업데이트 중... (사용 권한: ${config.slack.userToken ? '정현웅 님 유저 권한' : 'HANSL 봇 권한'})`);
 
     // canvases.edit API 호출: range 없이 document_content만 전달하여 전체 영역 덮어쓰기(replace) 실행!
+    // 1. 캔버스 제목(Title) 업데이트
+    try {
+      await slackClient.apiCall('canvases.edit', {
+        canvas_id: canvasId,
+        changes: [
+          {
+            operation: 'rename',
+            title_content: {
+              type: 'markdown',
+              markdown: `${cleanMemberName} - ${weekTitle}`
+            }
+          }
+        ]
+      });
+      console.log(`  -> 🎉 캔버스(${canvasId}) 제목 실시간 수정 완료!`);
+    } catch (titleErr) {
+      console.warn(`  -> ⚠️ 캔버스 제목 수정 실패 (계속 진행):`, titleErr.message);
+    }
+
+    // 2. 캔버스 본문(Content) 업데이트
     const response = await slackClient.apiCall('canvases.edit', {
       canvas_id: canvasId,
       changes: [
