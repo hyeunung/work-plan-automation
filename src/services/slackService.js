@@ -881,7 +881,18 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
                     }
                   } else {
                     dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
-                    logItemText += `  - (상세: ${formattedLine.trim()})\n`;
+                    
+                    // 글자수 제한 체크 (3000자 초과 방지)
+                    const appendStr = `  - (상세: ${formattedLine.trim()})\n`;
+                    if (logItemText.length + appendStr.length > 2800) {
+                      const limitNotice = `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
+                      if (!logItemText.includes(limitNotice)) {
+                        logItemText += limitNotice;
+                      }
+                    } else {
+                      logItemText += appendStr;
+                    }
+
                     if (lineImages.length > 0) {
                       for (const img of lineImages) {
                         logImages.push(img);
