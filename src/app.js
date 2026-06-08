@@ -1,3 +1,4 @@
+process.env.TZ = 'Asia/Seoul'; // 프로세스 전체 타임존을 한국 서울 시간으로 강제 설정
 const cron = require('node-cron');
 const notionService = require('./services/notionService');
 const analyzer = require('./services/analyzer');
@@ -30,12 +31,20 @@ function getMonthAndWeek(date) {
 }
 
 /**
- * 서버 타임존에 영향받지 않는 KST (Asia/Seoul) 기준 현재 일시를 가져옵니다.
+ * 날짜 객체를 YYYY-MM-DD KST 형식으로 포맷팅합니다.
+ */
+function formatKstDate(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * KST (Asia/Seoul) 기준 현재 일시를 가져옵니다. (TZ 환경변수가 설정되어 있으므로 new Date()를 반환)
  */
 function getKstDate() {
-  const utc = new Date().getTime() + (new Date().getTimezoneOffset() * 60000);
-  const kst = new Date(utc + (9 * 60 * 60 * 1000));
-  return kst;
+  return new Date();
 }
 
 /**
@@ -44,7 +53,7 @@ function getKstDate() {
 function getReportDateRanges(todayDate = getKstDate()) {
   const lastWeekMonday = new Date(todayDate);
   const day = lastWeekMonday.getDay();
-  const daysToMonday = day === 0 ? -13 : -day - 5;
+  const daysToMonday = day === 0 ? -13 : -day - 6;
   lastWeekMonday.setDate(lastWeekMonday.getDate() + daysToMonday);
 
   const lastWeekSunday = new Date(lastWeekMonday);
@@ -53,7 +62,7 @@ function getReportDateRanges(todayDate = getKstDate()) {
   const thisWeekMonday = new Date(lastWeekMonday);
   thisWeekMonday.setDate(thisWeekMonday.getDate() + 7);
 
-  const format = (d) => d.toISOString().split('T')[0];
+  const format = (d) => formatKstDate(d);
 
   const lastWeekInfo = getMonthAndWeek(lastWeekMonday);
   const thisWeekInfo = getMonthAndWeek(todayDate);
@@ -193,7 +202,7 @@ async function executeDailyPipeline() {
   
   // 한국 시간(KST) 기준으로 오늘의 YYYY-MM-DD 날짜 추출
   const kstNow = getKstDate();
-  const todayStr = kstNow.toISOString().split('T')[0];
+  const todayStr = formatKstDate(kstNow);
 
   let startDate = todayStr;
   let endDate = todayStr;
@@ -205,7 +214,7 @@ async function executeDailyPipeline() {
     const sat = new Date(kstNow);
     sat.setDate(kstNow.getDate() - 2);
     
-    startDate = sat.toISOString().split('T')[0];
+    startDate = formatKstDate(sat);
     endDate = todayStr;
     console.log(`- 수집 모드: 월요일 저녁 주말 포함 실적 보고 (기간: ${startDate} ~ ${endDate})`);
   } else {
@@ -285,7 +294,7 @@ async function executeDailyReminderPipeline(targetDate = null) {
 
   try {
     const kstNow = getKstDate();
-    const todayStr = targetDate || kstNow.toISOString().split('T')[0];
+    const todayStr = targetDate || formatKstDate(kstNow);
     
     // 1. 공휴일 검사
     const isHoliday = await supabaseService.checkIsHoliday(todayStr);

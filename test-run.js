@@ -1,3 +1,4 @@
+process.env.TZ = 'Asia/Seoul';
 const notionService = require('./src/services/notionService');
 const analyzer = require('./src/services/analyzer');
 const slackService = require('./src/services/slackService');
