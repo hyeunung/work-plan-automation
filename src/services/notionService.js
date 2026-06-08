@@ -141,7 +141,12 @@ async function getDailyWorkLogs(startDate, endDate, memberName) {
           {
             property: '업무일',
             date: {
-              on_or_after: startDate,
+              on_or_after: startDate
+            }
+          },
+          {
+            property: '업무일',
+            date: {
               on_or_before: endDate
             }
           },
