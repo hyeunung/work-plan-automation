@@ -133,7 +133,7 @@ function padRight(str, targetWidth) {
 function buildCanvasMarkdownContent({ weekTitle, nextWeekTitle, memberName, analysisResults, dailyLogs, nextWeekPlan, tasksMap, startDate, endDate }) {
   const cleanMemberName = memberName.replace(' 님', '');
   
-  let markdownContent = `# 📅 [${weekTitle}] 주간 업무 브리핑 - ${cleanMemberName} 님\n`;
+  let markdownContent = `# 📅 [${weekTitle}] 주간 업무 브리핑\n`;
   markdownContent += `> 월요일 출근 시간 전, 지난주 업무 분석 및 금주 계획 종합 브리핑입니다.\n\n`;
   markdownContent += `---\n\n`;
 
