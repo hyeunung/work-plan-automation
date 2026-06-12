@@ -263,7 +263,40 @@ async function executeDailyPipeline() {
     }
   }
 
-  // 4단계: 1:1 HANSL 봇채팅방(DM)으로 보고서 전송
+  // 4단계: 기존 아카이브 파일 비교를 통한 업데이트 여부 감지
+  const fs = require('fs');
+  const path = require('path');
+  const reportDir = path.join(__dirname, '../docs/daily-reports');
+  const filename = `${endDate}.md`;
+  const savePath = path.join(reportDir, filename);
+
+  const currentMarkdown = await slackService.buildDailyReportMarkdown({
+    date: endDate,
+    memberReports
+  });
+
+  if (fs.existsSync(savePath)) {
+    const existingMarkdown = fs.readFileSync(savePath, 'utf8');
+
+    // 순수 텍스트 비교를 위해 이미지 태그 및 하이퍼링크 주소를 제거하는 헬퍼
+    const cleanForCompare = (str) => {
+      return str
+        .replace(/!\[.*?\]\(.*?\)/g, '') // 이미지 태그 제거
+        .replace(/https?:\/\/[^\s)>|]+/g, '') // 모든 URL 주소 제거 (만료 파라미터 및 바로가기 포맷 차이 제거)
+        .replace(/[\s\r\n]+/g, ' ') // 공백 및 줄바꿈 차이 일치화
+        .trim();
+    };
+
+    if (cleanForCompare(currentMarkdown) === cleanForCompare(existingMarkdown)) {
+      console.log(`\n==================================================`);
+      console.log(`⏭️  [스킵] 오늘(${endDate})의 일일 업무 일지 변동 사항이 없습니다.`);
+      console.log(`==================================================`);
+      return;
+    }
+    console.log(`\n🔄 [변동 감지] 일지 보완(추가/수정)이 확인되어 슬랙 및 아카이브 갱신을 진행합니다.`);
+  }
+
+  // 5단계: 1:1 HANSL 봇채팅방(DM)으로 보고서 전송
   if (memberReports.length > 0) {
     try {
       const isNoticeSent = await slackService.sendDailyReport({

@@ -764,8 +764,196 @@ async function formatLinksInText(text, collectImageUrls = null) {
   return formatted;
 }
 
+async function buildDailyReportMarkdown({ date, memberReports }) {
+  try {
+    const dayLabel = formatDayLabel(date);
+    
+    // Supabase에서 승인된 출장자 정보 조회
+    const approvedTrips = await supabaseService.getApprovedBusinessTrips(date);
+
+    let dailyArchiveContent = `# 📅 일일 업무 보고 브리핑 (${dayLabel})\n\n`;
+    dailyArchiveContent += `> 당일 팀원들의 Notion Daily Work Log 취합 요약 브리핑 히스토리입니다.\n\n---\n\n`;
+
+    for (const rep of memberReports) {
+      const cleanName = rep.memberName.replace(' 님', '').trim();
+      const memberEmail = MEMBER_EMAILS[cleanName];
+      const isTripFromSupabase = memberEmail && approvedTrips.has(memberEmail);
+
+      let statusLabel = '';
+      if (isTripFromSupabase) {
+        statusLabel = ' - 출장';
+      } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
+        let hasVacation = false;
+        let hasMorningHalf = false;
+        let hasAfternoonHalf = false;
+        let hasHalfDay = false;
+        let hasBusinessTrip = false;
+
+        rep.dailyLogs.forEach(log => {
+          const t = log.title || '';
+          if (t.includes('오전반차') || t.includes('오전 반차')) {
+            hasMorningHalf = true;
+          } else if (t.includes('오후반차') || t.includes('오후 반차')) {
+            hasAfternoonHalf = true;
+          } else if (t.includes('반차')) {
+            hasHalfDay = true;
+          } else if (t.includes('연차')) {
+            hasVacation = true;
+          } else if (t.includes('출장')) {
+            hasBusinessTrip = true;
+          }
+        });
+
+        if (hasVacation) statusLabel = ' - 연차';
+        else if (hasMorningHalf) statusLabel = ' - 오전반차';
+        else if (hasAfternoonHalf) statusLabel = ' - 오후반차';
+        else if (hasHalfDay) statusLabel = ' - 반차';
+        else if (hasBusinessTrip) statusLabel = ' - 출장';
+      }
+
+      dailyArchiveContent += `## 👤 ${cleanName} 님${statusLabel}\n\n`;
+
+      if (!rep.dailyLogs || rep.dailyLogs.length === 0) {
+        const emptyText = isTripFromSupabase ? '* _오늘 기록된 일일 업무 일지가 없습니다. (출장)_' : '* _오늘 기록된 일일 업무 일지가 없습니다._';
+        dailyArchiveContent += `${emptyText}\n\n`;
+      } else {
+        for (const log of rep.dailyLogs) {
+          const isOutsideWork = 
+            (log.title && log.title.includes('스마트팜 외 업무')) ||
+            log.taskRelations.some(rel => {
+              const taskInfo = rep.tasksMap && rep.tasksMap[rel.id];
+              return taskInfo && (
+                taskInfo.projectName === '스마트팜 외 업무' ||
+                taskInfo.name === '스마트팜 외 업무' ||
+                (taskInfo.name && taskInfo.name.includes('스마트팜 외 업무'))
+              );
+            });
+
+          if (isOutsideWork) {
+            const taskNames = log.taskRelations
+              .map(rel => rep.tasksMap[rel.id]?.name)
+              .filter(Boolean);
+            const taskNameStr = taskNames.length > 0 ? taskNames.join(', ') : '스마트팜 외 업무';
+            
+            dailyArchiveContent += `* **[${taskNameStr} (스마트팜 외 업무)](${log.url})**\n\n`;
+          } else {
+            const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
+            dailyArchiveContent += `* **[${cleanTitle}](${log.url})**\n`;
+
+            const logImages = [];
+            if (log.details && log.details.trim()) {
+              const detailLines = log.details.trim().split('\n');
+              for (const line of detailLines) {
+                if (line.trim()) {
+                  const lineImages = [];
+                  const formattedLine = await formatLinksInText(line.trim(), lineImages);
+
+                  const cleanLineText = formattedLine.replace(/[•\-\*\s\(\)]/g, '').trim();
+                  if (cleanLineText.length > 0) {
+                    dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
+                  }
+                  if (lineImages.length > 0) {
+                    for (const img of lineImages) {
+                      logImages.push(img);
+                    }
+                  }
+                }
+              }
+            }
+
+            for (const img of logImages) {
+              const shortUrl = img.shortUrl || await getPermanentImageUrl(img.url);
+              dailyArchiveContent += `\n![${img.label || '이미지 첨부'}](${shortUrl})\n`;
+            }
+            dailyArchiveContent += `\n`;
+          }
+        }
+      }
+      dailyArchiveContent += `\n---\n\n`;
+    }
+
+    return dailyArchiveContent;
+  } catch (error) {
+    console.error('[Slack Service] 일일 마크다운 생성 실패:', error.message);
+    return '';
+  }
+}
+
+async function cleanUpDailyReportMessages({ targetUserId, date }) {
+  try {
+    const dayLabel = formatDayLabel(date);
+    console.log(`  -> [Slack 청소] '${dayLabel}' 일일 보고 메시지 청소 시작...`);
+
+    // 1. 임시 메시지를 보내 DM 채널 ID 동적 획득
+    const tempMsg = await slack.chat.postMessage({
+      channel: targetUserId,
+      text: '임시 메시지 (청소용)'
+    });
+
+    if (!tempMsg.ok || !tempMsg.channel) {
+      console.warn('  -> [Slack 청소] DM 채널 ID 획득 실패');
+      return false;
+    }
+    const channelId = tempMsg.channel;
+
+    // 임시 메시지 즉시 삭제
+    await slack.chat.delete({
+      channel: channelId,
+      ts: tempMsg.ts
+    });
+
+    // 2. DM 채널의 히스토리 조회 (최대 100개)
+    const history = await slack.conversations.history({
+      channel: channelId,
+      limit: 100
+    });
+
+    if (!history.ok || !history.messages) {
+      console.warn('  -> [Slack 청소] 히스토리 조회 실패');
+      return false;
+    }
+
+    let deleteCount = 0;
+    for (const msg of history.messages) {
+      const text = msg.text || '';
+      const isBot = msg.bot_id || msg.user === tempMsg.message?.user;
+
+      const isTargetReportMsg =
+        (text.includes(dayLabel) && text.includes('일일 업무 보고')) ||
+        text.includes('김윤회 님') ||
+        text.includes('김희승 님') ||
+        text.includes('최현빈 님') ||
+        text.includes('일지 상세') ||
+        (msg.blocks && JSON.stringify(msg.blocks).includes(dayLabel)) ||
+        (msg.blocks && JSON.stringify(msg.blocks).includes('일일 업무 보고'));
+
+      if (isBot && isTargetReportMsg) {
+        try {
+          await slack.chat.delete({
+            channel: channelId,
+            ts: msg.ts
+          });
+          deleteCount++;
+          await new Promise(resolve => setTimeout(resolve, 800)); // 레이트 리밋 방지
+        } catch (delErr) {
+          console.warn(`  -> [Slack 청소] 메시지 삭제 실패 (ts: ${msg.ts}):`, delErr.message);
+        }
+      }
+    }
+
+    console.log(`  -> 🎉 [Slack 청소] 총 ${deleteCount}개의 기존 일일 보고 메시지를 자동 삭제했습니다.`);
+    return true;
+  } catch (error) {
+    console.error(`  -> [Slack 청소] 에러 발생:`, error.message);
+    return false;
+  }
+}
+
 async function sendDailyReport({ date, memberReports, targetUserId }) {
   try {
+    // 메시지 발송 전에 기존 메시지를 먼저 싹 지웁니다.
+    await cleanUpDailyReportMessages({ targetUserId, date });
+
     const dayLabel = formatDayLabel(date);
     
     // Supabase에서 승인된 출장자 정보 조회
@@ -1049,5 +1237,7 @@ module.exports = {
   sendDailyReport,
   findUserIdByEmail,
   sendChannelReminder,
-  MEMBER_EMAILS
+  MEMBER_EMAILS,
+  buildDailyReportMarkdown,
+  cleanUpDailyReportMessages
 };
