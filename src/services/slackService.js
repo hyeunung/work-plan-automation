@@ -919,13 +919,8 @@ async function cleanUpDailyReportMessages({ targetUserId, date }) {
       const isBot = msg.bot_id || msg.user === tempMsg.message?.user;
 
       const isTargetReportMsg =
-        (text.includes(dayLabel) && text.includes('일일 업무 보고')) ||
-        text.includes('김윤회 님') ||
-        text.includes('김희승 님') ||
-        text.includes('최현빈 님') ||
-        text.includes('일지 상세') ||
-        (msg.blocks && JSON.stringify(msg.blocks).includes(dayLabel)) ||
-        (msg.blocks && JSON.stringify(msg.blocks).includes('일일 업무 보고'));
+        text.includes(dayLabel) ||
+        (msg.blocks && JSON.stringify(msg.blocks).includes(dayLabel));
 
       if (isBot && isTargetReportMsg) {
         try {
@@ -1019,7 +1014,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
       // 담당자 헤더 단독 전송
       await slack.chat.postMessage({
         channel: realDmChannelId,
-        text: `👤 *${cleanName} 님${statusLabel}*`,
+        text: `👤 *${cleanName} 님${statusLabel}* - _(${dayLabel})_`,
         mrkdwn: true,
         unfurl_links: false
       });
@@ -1030,7 +1025,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
         dailyArchiveContent += `${emptyText}\n\n`;
         await slack.chat.postMessage({
           channel: realDmChannelId,
-          text: emptyText,
+          text: `${emptyText} - _(${dayLabel})_`,
           mrkdwn: true,
           unfurl_links: false
         });
@@ -1139,7 +1134,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
           // 일지 단위 메시지 개별 전송
           await slack.chat.postMessage({
             channel: realDmChannelId,
-            text: `👤 ${cleanName} 님 일지 상세`,
+            text: `👤 ${cleanName} 님 일지 상세 - (${dayLabel})`,
             blocks: logBlocks,
             unfurl_links: false
           });
@@ -1157,7 +1152,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
             type: 'divider'
           }
         ],
-        text: '---',
+        text: `--- (${dayLabel})`,
         unfurl_links: false
       });
       await new Promise(resolve => setTimeout(resolve, 1500));
