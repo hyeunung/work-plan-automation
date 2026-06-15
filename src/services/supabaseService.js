@@ -69,22 +69,38 @@ async function getApprovedLeaves(date) {
 
 /**
  * 특정 날짜에 승인된 출장(business_trips) 목록을 가져옵니다.
+ * 반환값: 출장자 이름(신청자 및 동반 출장자)들의 Set
  */
 async function getApprovedBusinessTrips(date) {
   try {
-    // PostgREST 조인 구문 활용: requester_id에 연결된 employees 테이블의 email 조회 (외래키 모호성 해결 위해 !requester_id 명시)
-    const data = await supabaseFetch(`/rest/v1/business_trips?approval_status=eq.approved&trip_start_date=lte.${date}&trip_end_date=gte.${date}&select=requester_name,employees!requester_id(email)`);
+    const data = await supabaseFetch(`/rest/v1/business_trips?approval_status=eq.approved&trip_start_date=lte.${date}&trip_end_date=gte.${date}&select=requester_name,travelers,companions`);
     
-    const tripEmails = new Set();
+    const tripNames = new Set();
     if (data && data.length > 0) {
       data.forEach(item => {
-        const email = item.employees?.email;
-        if (email) {
-          tripEmails.add(email.trim().toLowerCase());
+        // 1. 신청자 이름 추가
+        if (item.requester_name) {
+          tripNames.add(item.requester_name.trim());
+        }
+        
+        // 2. 동반 출장자 이름 추가 (travelers 컬럼 이용)
+        if (Array.isArray(item.travelers)) {
+          item.travelers.forEach(name => {
+            if (name) tripNames.add(name.trim());
+          });
+        }
+        
+        // 3. 만약 companions가 있다면 보완적 추가
+        if (Array.isArray(item.companions)) {
+          item.companions.forEach(comp => {
+            if (comp && comp.name) {
+              tripNames.add(comp.name.trim());
+            }
+          });
         }
       });
     }
-    return tripEmails;
+    return tripNames;
   } catch (error) {
     console.error(`[Supabase] 출장 승인 목록 조회 실패 (${date}):`, error.message);
     return new Set();

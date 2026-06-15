@@ -366,11 +366,17 @@ async function executeDailyReminderPipeline(targetDate = null) {
       if (!email) continue;
 
       const leaveType = approvedLeaves[email];
-      const isTrip = approvedTrips.has(email);
+      const isTrip = approvedTrips.has(name);
 
-      // 연차, 반차, 공가 등 휴가상태이면 독려 제외 (출장자는 제외 안됨!)
+      // 연차, 반차, 공가 등 휴가상태이면 독려 제외
       if (leaveType) {
         console.log(`  -> 👤 ${name} 님: 휴가 상태 (${leaveType})로 판정되어 일지 독려에서 제외합니다.`);
+        continue;
+      }
+
+      // 출장 중이면 독려 제외
+      if (isTrip) {
+        console.log(`  -> 👤 ${name} 님: 출장 상태로 판정되어 일지 독려에서 제외합니다.`);
         continue;
       }
 
