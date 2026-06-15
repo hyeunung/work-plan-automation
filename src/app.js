@@ -231,6 +231,13 @@ async function executeDailyPipeline() {
     console.log(`- 수집 모드: 평일 저녁 당일 실적 보고 (오늘자: ${startDate})`);
   }
 
+  // 주말 및 공휴일 검사
+  const isWeekend = day === 0 || day === 6;
+  const isHoliday = await supabaseService.checkIsHoliday(endDate);
+  if (isWeekend || isHoliday) {
+    console.log(`- ☕ 대상일자(${endDate})는 휴일(주말: ${isWeekend}, 공휴일: ${isHoliday})이므로 일일 업무 보고 파이프라인을 생략합니다.`);
+    return;
+  }
 
   // 1단계: 대상 슬랙 유저 ID 동적 추출 (정현웅 님 ID)
   let targetUserId = config.slack.adminUserId || 'U0B1U11SBE2';
@@ -335,11 +342,14 @@ async function executeDailyReminderPipeline(targetDate = null) {
   try {
     const kstNow = getKstDate();
     const todayStr = targetDate || formatKstDate(kstNow);
+    const targetDateObj = targetDate ? new Date(targetDate) : kstNow;
+    const day = targetDateObj.getDay();
     
-    // 1. 공휴일 검사
+    // 1. 주말 및 공휴일 검사
+    const isWeekend = day === 0 || day === 6;
     const isHoliday = await supabaseService.checkIsHoliday(todayStr);
-    if (isHoliday) {
-      console.log(`  -> ☕ 오늘은 공휴일(${todayStr})이므로 독려 메시지 발송을 생략합니다.`);
+    if (isWeekend || isHoliday) {
+      console.log(`  -> ☕ 대상일자(${todayStr})는 휴일(주말: ${isWeekend}, 공휴일: ${isHoliday})이므로 독려 메시지 발송을 생략합니다.`);
       return;
     }
 
