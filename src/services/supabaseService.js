@@ -96,8 +96,13 @@ async function getApprovedBusinessTrips(date) {
  */
 async function uploadImageToStorage(imageUrl) {
   try {
-    // 1. 이미지 다운로드
-    const response = await fetch(imageUrl);
+    // 1. 이미지 다운로드 (5초 타임아웃)
+    const downloadController = new AbortController();
+    const downloadTimeout = setTimeout(() => downloadController.abort(), 5000);
+    
+    const response = await fetch(imageUrl, { signal: downloadController.signal });
+    clearTimeout(downloadTimeout);
+    
     if (!response.ok) {
       throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
     }
@@ -118,8 +123,11 @@ async function uploadImageToStorage(imageUrl) {
     const randomSuffix = Math.random().toString(36).substring(2, 9);
     const fileName = `workplan-logs/${timestamp}_${randomSuffix}.${ext}`;
     
-    // 2. Supabase Storage API로 업로드 (POST /storage/v1/object/workplan/filePath)
+    // 2. Supabase Storage API로 업로드 (POST /storage/v1/object/workplan/filePath) - 10초 타임아웃
     const uploadUrl = `${config.supabase.url}/storage/v1/object/workplan/${fileName}`;
+    const uploadController = new AbortController();
+    const uploadTimeout = setTimeout(() => uploadController.abort(), 10000);
+    
     const uploadResponse = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
@@ -128,8 +136,10 @@ async function uploadImageToStorage(imageUrl) {
         'Content-Type': contentType,
         'x-upsert': 'true'
       },
-      body: buffer
+      body: buffer,
+      signal: uploadController.signal
     });
+    clearTimeout(uploadTimeout);
     
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();

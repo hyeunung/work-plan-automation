@@ -52,7 +52,12 @@ async function getShortUrl(longUrl) {
   try {
     const encodedUrl = encodeURIComponent(longUrl);
     const apiUrl = `https://tinyurl.com/api-create.php?url=${encodedUrl}`;
-    const response = await fetch(apiUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch(apiUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    
     if (!response.ok) {
       throw new Error(`TinyURL API status error: ${response.status}`);
     }
