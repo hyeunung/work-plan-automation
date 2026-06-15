@@ -773,8 +773,9 @@ async function buildDailyReportMarkdown({ date, memberReports }) {
   try {
     const dayLabel = formatDayLabel(date);
     
-    // Supabase에서 승인된 출장자 정보 조회
+    // Supabase에서 승인된 출장자 및 휴가자 정보 조회
     const approvedTrips = await supabaseService.getApprovedBusinessTrips(date);
+    const approvedLeaves = await supabaseService.getApprovedLeaves(date);
 
     let dailyArchiveContent = `# 📅 일일 업무 보고 브리핑 (${dayLabel})\n\n`;
     dailyArchiveContent += `> 당일 팀원들의 Notion Daily Work Log 취합 요약 브리핑 히스토리입니다.\n\n---\n\n`;
@@ -782,10 +783,13 @@ async function buildDailyReportMarkdown({ date, memberReports }) {
     for (const rep of memberReports) {
       const cleanName = rep.memberName.replace(' 님', '').trim();
       const memberEmail = MEMBER_EMAILS[cleanName];
-      const isTripFromSupabase = memberEmail && approvedTrips.has(memberEmail);
+      const isTripFromSupabase = approvedTrips.has(cleanName);
+      const leaveTypeFromSupabase = memberEmail ? approvedLeaves[memberEmail.trim().toLowerCase()] : null;
 
       let statusLabel = '';
-      if (isTripFromSupabase) {
+      if (leaveTypeFromSupabase) {
+        statusLabel = ` - ${leaveTypeFromSupabase}`;
+      } else if (isTripFromSupabase) {
         statusLabel = ' - 출장';
       } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
         let hasVacation = false;
@@ -819,7 +823,12 @@ async function buildDailyReportMarkdown({ date, memberReports }) {
       dailyArchiveContent += `## 👤 ${cleanName} 님${statusLabel}\n\n`;
 
       if (!rep.dailyLogs || rep.dailyLogs.length === 0) {
-        const emptyText = isTripFromSupabase ? '* _오늘 기록된 일일 업무 일지가 없습니다. (출장)_' : '* _오늘 기록된 일일 업무 일지가 없습니다._';
+        let emptyText = '* _오늘 기록된 일일 업무 일지가 없습니다._';
+        if (leaveTypeFromSupabase) {
+          emptyText = `* _금일 ${leaveTypeFromSupabase}입니다._`;
+        } else if (isTripFromSupabase) {
+          emptyText = '* _금일 출장입니다._';
+        }
         dailyArchiveContent += `${emptyText}\n\n`;
       } else {
         for (const log of rep.dailyLogs) {
@@ -956,8 +965,9 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
 
     const dayLabel = formatDayLabel(date);
     
-    // Supabase에서 승인된 출장자 정보 조회
+    // Supabase에서 승인된 출장자 및 휴가자 정보 조회
     const approvedTrips = await supabaseService.getApprovedBusinessTrips(date);
+    const approvedLeaves = await supabaseService.getApprovedLeaves(date);
     
     // 1. 공통 헤더 메시지 발송 및 실시간 DM 채널 ID 동적 추출
     let headerText = `📢 *[일일 업무 보고 브리핑]* (${dayLabel})\n`;
@@ -980,11 +990,14 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
     for (const rep of memberReports) {
       const cleanName = rep.memberName.replace(' 님', '').trim();
       const memberEmail = MEMBER_EMAILS[cleanName];
-      const isTripFromSupabase = memberEmail && approvedTrips.has(memberEmail);
+      const isTripFromSupabase = approvedTrips.has(cleanName);
+      const leaveTypeFromSupabase = memberEmail ? approvedLeaves[memberEmail.trim().toLowerCase()] : null;
 
       let statusLabel = '';
-      if (isTripFromSupabase) {
-        statusLabel = ' (출장)';
+      if (leaveTypeFromSupabase) {
+        statusLabel = ` - ${leaveTypeFromSupabase}`;
+      } else if (isTripFromSupabase) {
+        statusLabel = ' - 출장';
       } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
         let hasVacation = false;
         let hasMorningHalf = false;
@@ -1026,7 +1039,12 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
       await new Promise(resolve => setTimeout(resolve, 1500));
 
       if (!rep.dailyLogs || rep.dailyLogs.length === 0) {
-        const emptyText = isTripFromSupabase ? '* _오늘 기록된 일일 업무 일지가 없습니다. (출장)_' : '* _오늘 기록된 일일 업무 일지가 없습니다._';
+        let emptyText = '* _오늘 기록된 일일 업무 일지가 없습니다._';
+        if (leaveTypeFromSupabase) {
+          emptyText = `* _금일 ${leaveTypeFromSupabase}입니다._`;
+        } else if (isTripFromSupabase) {
+          emptyText = '* _금일 출장입니다._';
+        }
         dailyArchiveContent += `${emptyText}\n\n`;
         await slack.chat.postMessage({
           channel: realDmChannelId,
