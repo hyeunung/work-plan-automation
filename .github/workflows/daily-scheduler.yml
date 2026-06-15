@@ -2,16 +2,16 @@ name: HANSL Notion & Slack Automation Scheduler
 
 on:
   schedule:
-    # 1. 매주 월요일 아침 09:00 KST (UTC 월요일 00:00) - 주간 보고 분석
-    - cron: '0 0 * * 1'
+    # 1. 매주 월요일 아침 09:10 KST (UTC 월요일 00:10) - 주간 보고 분석
+    - cron: '10 0 * * 1'
     # 2. 매 평일(월~금) 저녁 19:00 KST (UTC 월~금요일 10:00) - 평일 저녁 일일 보고
     - cron: '0 10 * * 1-5'
     # 2-1. 매 평일(월~금) 밤 21:00 KST (UTC 월~금요일 12:00) - 평일 밤 일일 보고 감시/갱신
     - cron: '0 12 * * 1-5'
     # 2-2. 매 평일(월~금) 밤 23:00 KST (UTC 월~금요일 14:00) - 평일 밤 일일 보고 감시/갱신
     - cron: '0 14 * * 1-5'
-    # 2-3. 매 평일(월~금) 아침 08:30 KST (UTC 월~금요일 23:30) - 익일 아침 최종 일일 보고 감시/갱신
-    - cron: '30 23 * * 1-5'
+    # 2-3. 매 평일(월~금) 아침 08:30 KST (UTC 일~목요일 23:30) - 익일 아침 최종 일일 보고 감시/갱신
+    - cron: '30 23 * * 0-4'
     # 3. 매 평일(월~금) 저녁 18:00 KST (UTC 월~금요일 09:00) - 일지 작성 독려 멘션
     - cron: '0 9 * * 1-5'
   workflow_dispatch:
@@ -80,13 +80,13 @@ jobs:
           else
             CRON_TIME="${{ github.event.schedule }}"
             echo "⏰ [자동 스케줄 트리거] Cron 스펙: $CRON_TIME"
-            if [ "$CRON_TIME" = "0 0 * * 1" ]; then
-              # 월요일 아침 9시 KST
+            if [ "$CRON_TIME" = "10 0 * * 1" ]; then
+              # 월요일 아침 9:10 KST
               node -e "require('./src/app').executeWeeklyPipeline()"
             elif [ "$CRON_TIME" = "0 9 * * 1-5" ]; then
               # 평일 저녁 6시 KST
               node -e "require('./src/app').executeDailyReminderPipeline()"
-            elif [ "$CRON_TIME" = "0 10 * * 1-5" ] || [ "$CRON_TIME" = "0 12 * * 1-5" ] || [ "$CRON_TIME" = "0 14 * * 1-5" ] || [ "$CRON_TIME" = "30 23 * * 1-5" ]; then
+            elif [ "$CRON_TIME" = "0 10 * * 1-5" ] || [ "$CRON_TIME" = "0 12 * * 1-5" ] || [ "$CRON_TIME" = "0 14 * * 1-5" ] || [ "$CRON_TIME" = "30 23 * * 0-4" ]; then
               # 평일 저녁 7시, 9시, 11시 KST 및 익일 아침 8:30 KST
               node -e "require('./src/app').executeDailyPipeline()"
             fi
