@@ -194,14 +194,21 @@ async function executeWeeklyPipeline() {
  * 매일 실행될 일일 업무 보고 취합 및 DM 전송 파이프라인 (저녁 19:00 KST 가동)
  */
 async function executeDailyPipeline() {
+  const kstNow = getKstDate();
+  const isMorning = kstNow.getHours() < 12;
+  const modeStr = isMorning ? "오전 08:30 감시 모드" : "저녁 19:00 모드";
+
   console.log(`\n==================================================`);
-  console.log(`🔔 [자동 일일 스케줄 트리거] ${new Date().toLocaleString()} 일일 업무 보고 파이프라인 시작 (저녁 19:00 모드)`);
+  console.log(`🔔 [자동 일일 스케줄 트리거] ${new Date().toLocaleString()} 일일 업무 보고 파이프라인 시작 (${modeStr})`);
   console.log(`==================================================`);
 
   const members = ['김윤회', '김희승', '최현빈'];
   
-  // 한국 시간(KST) 기준으로 오늘의 YYYY-MM-DD 날짜 추출
-  const kstNow = getKstDate();
+  if (isMorning) {
+    kstNow.setDate(kstNow.getDate() - 1);
+    console.log(`- [오전 실행 감지] 전날(어제: ${formatKstDate(kstNow)}) 일일 보고서 최종 업데이트를 진행합니다.`);
+  }
+
   const todayStr = formatKstDate(kstNow);
 
   let startDate = todayStr;
