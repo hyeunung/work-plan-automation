@@ -1,19 +1,6 @@
 name: HANSL Notion & Slack Automation Scheduler
 
 on:
-  schedule:
-    # 1. 매주 월요일 아침 09:10 KST (UTC 월요일 00:10) - 주간 보고 분석
-    - cron: '10 0 * * 1'
-    # 2. 매 평일(월~금) 저녁 19:10 KST (UTC 월~금요일 10:10) - 평일 저녁 일일 보고
-    - cron: '10 10 * * 1-5'
-    # 2-1. 매 평일(월~금) 밤 21:10 KST (UTC 월~금요일 12:10) - 평일 밤 일일 보고 감시/갱신
-    - cron: '10 12 * * 1-5'
-    # 2-2. 매 평일(월~금) 밤 23:10 KST (UTC 월~금요일 14:10) - 평일 밤 일일 보고 감시/갱신
-    - cron: '10 14 * * 1-5'
-    # 2-3. 매 평일(월~금) 아침 08:35 KST (UTC 일~목요일 23:35) - 익일 아침 최종 일일 보고 감시/갱신
-    - cron: '35 23 * * 0-4'
-    # 3. 매 평일(월~금) 저녁 18:15 KST (UTC 월~금요일 09:15) - 일지 작성 독려 멘션
-    - cron: '15 9 * * 1-5'
   workflow_dispatch:
     inputs:
       pipeline_type:
@@ -64,32 +51,14 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          # 1. 수동 실행 (workflow_dispatch) 분기
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TYPE="${{ github.event.inputs.pipeline_type }}"
-            echo "🚀 [수동 실행] 선택된 파이프라인: $TYPE"
-            if [ "$TYPE" = "weekly" ]; then
-              node -e "require('./src/app').executeWeeklyPipeline()"
-            elif [ "$TYPE" = "daily-reminder" ]; then
-              node -e "require('./src/app').executeDailyReminderPipeline()"
-            else
-              node -e "require('./src/app').executeDailyPipeline()"
-            fi
-          
-          # 2. 자동 스케줄러 분기 (cron 시간에 따른 판별)
+          TYPE="${{ github.event.inputs.pipeline_type }}"
+          echo "🚀 [트리거 실행] 선택된 파이프라인: $TYPE"
+          if [ "$TYPE" = "weekly" ]; then
+            node -e "require('./src/app').executeWeeklyPipeline()"
+          elif [ "$TYPE" = "daily-reminder" ]; then
+            node -e "require('./src/app').executeDailyReminderPipeline()"
           else
-            CRON_TIME="${{ github.event.schedule }}"
-            echo "⏰ [자동 스케줄 트리거] Cron 스펙: $CRON_TIME"
-            if [ "$CRON_TIME" = "10 0 * * 1" ]; then
-              # 월요일 아침 9:10 KST
-              node -e "require('./src/app').executeWeeklyPipeline()"
-            elif [ "$CRON_TIME" = "15 9 * * 1-5" ]; then
-              # 평일 저녁 6시 15분 KST
-              node -e "require('./src/app').executeDailyReminderPipeline()"
-            elif [ "$CRON_TIME" = "10 10 * * 1-5" ] || [ "$CRON_TIME" = "10 12 * * 1-5" ] || [ "$CRON_TIME" = "10 14 * * 1-5" ] || [ "$CRON_TIME" = "35 23 * * 0-4" ]; then
-              # 평일 저녁 7시 10분, 9시 10분, 11시 10분 KST 및 익일 아침 8:35 KST
-              node -e "require('./src/app').executeDailyPipeline()"
-            fi
+            node -e "require('./src/app').executeDailyPipeline()"
           fi
 
       - name: Commit and Push Archived Reports
