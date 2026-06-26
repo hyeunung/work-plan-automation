@@ -814,6 +814,68 @@ async function formatLinksInText(text, collectImageUrls = null) {
   return formatted;
 }
 
+const TECHNICAL_GLOSSARY = {
+  'RealSense': 'RealSense(3D 깊이 감지 카메라)',
+  'realsense': 'realsense(3D 깊이 감지 카메라)',
+  'D555': 'D555(카메라 장비)',
+  'Jetson': 'Jetson(인공지능 연산용 소형 컴퓨터)',
+  'jetson': 'jetson(인공지능 연산용 소형 컴퓨터)',
+  'DDS': 'DDS(실시간 데이터 통신 규격)',
+  'DDS-enabled': 'DDS-enabled(실시간 통신이 활성화된)',
+  'librealsense2': 'librealsense2(카메라 구동 라이브러리)',
+  'librealsense': 'librealsense(카메라 구동 라이브러리)',
+  'wrapper': 'wrapper(프로그램 연동 도구)',
+  'Jumbo frame': 'Jumbo frame(대용량 네트워크 패킷 데이터)',
+  'jumbo frame': 'jumbo frame(대용량 네트워크 패킷 데이터)',
+  'MTU': 'MTU(네트워크 전송 최대 크기)',
+  'dynamic linker': 'dynamic linker(실행 시 라이브러리 연결 도구)',
+  'teleop': 'teleop(원격 조종 기능)',
+  'cmd_vel': 'cmd_vel(속도 및 방향 제어 명령)',
+  'MCU bridge': 'MCU bridge(제어 보드 간 신호 변환기)',
+  'QoS': 'QoS(데이터 전송 품질 설정)',
+  'tcpdump': 'tcpdump(네트워크 패킷 분석 도구)',
+  'viewer': 'viewer(화면 모니터링 프로그램)',
+  'SDK': 'SDK(소프트웨어 개발 도구)',
+  'ROS2': 'ROS2(로봇 제어용 소프트웨어 플랫폼)',
+  'PoE': 'PoE(랜선 전원 공급 장치)',
+  'NIC': 'NIC(네트워크 카드/랜 포트)',
+  'UFW': 'UFW(보안 방화벽 프로그램)',
+  'firewalld': 'firewalld(보안 방화벽 프로그램)',
+  'docker': 'docker(개발 가상 컨테이너)',
+  'Docker': 'Docker(개발 가상 컨테이너)',
+  'topic': 'topic(ROS2 통신 채널)',
+  'topics': 'topics(ROS2 통신 채널들)',
+  'ldconfig': 'ldconfig(라이브러리 경로 갱신 도구)',
+  'ping': 'ping(네트워크 연결 확인 신호)',
+  'wheel': 'wheel(파이썬 패키지 설치용 파일)',
+  'ARM64': 'ARM64(소형 컴퓨터용 프로세서 규격)',
+  'aarch64': 'aarch64(소형 컴퓨터용 프로세서 규격)',
+  'CMakeCache.txt': 'CMakeCache.txt(빌드 설정 파일)',
+  'build-local': 'build-local(로컬 컴퓨터 자체 빌드)',
+  'realsense2_camera': 'realsense2_camera(ROS2 카메라 드라이버)'
+};
+
+function applyGlossaryFilter(text) {
+  if (!text) return '';
+  let result = text;
+  
+  // 키의 길이 역순으로 정렬하여 긴 키워드부터 치환 적용
+  const sortedKeys = Object.keys(TECHNICAL_GLOSSARY).sort((a, b) => b.length - a.length);
+  
+  for (const key of sortedKeys) {
+    const value = TECHNICAL_GLOSSARY[key];
+    const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    
+    // 이미 괄호 설명이 붙어 있는 경우는 중복 처리를 방지하기 위해 룩어헤드 적용.
+    // \b 대신 (?<![\w-])와 (?![\w-])를 적용하여 DDS가 DDS-enabled 내부에서 오치환되는 것을 방지합니다.
+    // 괄호 앞의 공백도 허용하도록 (?!\s*\()를 사용하여 중복 치환을 예방합니다.
+    const regex = new RegExp(`(?<![\\w-])${escapedKey}(?![\\w-])(?!\\s*\\()`, 'g');
+    result = result.replace(regex, value);
+  }
+  
+  return result;
+}
+
 /**
  * 일지 본문에서 목적, 의미, 개요 등의 핵심 문장을 추출하여 직관적인 요약 코너를 빌드합니다.
  */
@@ -874,7 +936,7 @@ function buildDailySummarySection(memberReports, date = null) {
     summary += `\n`;
   }
   
-  return hasAnyLog ? summary : '';
+  return hasAnyLog ? applyGlossaryFilter(summary) : '';
 }
 
 async function buildDailyReportMarkdown({ date, memberReports }) {
