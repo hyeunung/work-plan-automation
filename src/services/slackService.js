@@ -596,11 +596,53 @@ async function buildEmployeeReportText({ weekTitle, nextWeekTitle, memberName, a
   return text;
 }
 
+async function cleanUpWeeklyReportMessages({ channelId, weekTitle }) {
+  try {
+    console.log(`  -> [Slack 청소] '${weekTitle}' 주간 보고 완료 알림 청소 시작...`);
+    const history = await slack.conversations.history({
+      channel: channelId,
+      limit: 50
+    });
+
+    if (!history.ok || !history.messages) {
+      console.warn('  -> [Slack 청소] 히스토리 조회 실패');
+      return false;
+    }
+
+    let deleteCount = 0;
+    for (const msg of history.messages) {
+      const text = msg.text || '';
+      const isBot = msg.bot_id;
+
+      const isTargetReportMsg = text.includes(weekTitle) && text.includes('주간 업무 브리핑 캔버스 업데이트 완료');
+
+      if (isBot && isTargetReportMsg) {
+        try {
+          await slack.chat.delete({
+            channel: channelId,
+            ts: msg.ts
+          });
+          deleteCount++;
+          await new Promise(resolve => setTimeout(resolve, 800));
+        } catch (delErr) {
+          console.warn(`  -> [Slack 청소] 메시지 삭제 실패 (ts: ${msg.ts}):`, delErr.message);
+        }
+      }
+    }
+
+    console.log(`  -> 🎉 [Slack 청소] 총 ${deleteCount}개의 기존 주간 보고 메시지를 자동 삭제했습니다.`);
+    return true;
+  } catch (error) {
+    console.error(`  -> [Slack 청소] 에러 발생:`, error.message);
+    return false;
+  }
+}
+
 /**
  * 모든 직원의 주간 업무 리포트를 취합하여 지정 채널에 100% 무결점 텍스트 리포트 표로 발송합니다.
  * 또한 수동 캔버스 ID 목록이 설정된 경우, 각 캔버스를 실시간 덮어쓰기(수정) 갱신해 줍니다!
  */
-async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targetChannelName = '스마트팜-workplan', startDate, endDate, skipChannelNotice = false }) {
+async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targetChannelName = '주간업무보고', startDate, endDate, skipChannelNotice = false }) {
   try {
     // 1. [초중요 수동 캔버스 ID 실시간 업데이트 동작]
     // config 에 캔버스 ID들이 수동 기입되어 있다면 각 캔버스를 실시간 수정(덮어쓰기)합니다.
@@ -634,6 +676,9 @@ async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targe
     // 2. 통합 알림 채널 메시지 발송 (skipChannelNotice가 false일 때만 봇 명의로 알림 전송)
     if (!skipChannelNotice && updatedCanvases.length > 0) {
       const channelId = await findChannelIdByName(targetChannelName);
+      
+      // 메시지 중복 방지를 위해 기존 알림 청소
+      await cleanUpWeeklyReportMessages({ channelId, weekTitle });
       
       for (let i = 0; i < updatedCanvases.length; i++) {
         const uc = updatedCanvases[i];
@@ -846,14 +891,16 @@ async function buildDailyReportMarkdown({ date, memberReports }) {
     for (const rep of memberReports) {
       const cleanName = rep.memberName.replace(' 님', '').trim();
       const memberEmail = MEMBER_EMAILS[cleanName];
-      const isTripFromSupabase = approvedTrips.has(cleanName);
+      const tripInfo = approvedTrips.get(cleanName);
+      const isTripFromSupabase = !!tripInfo;
+      const isSmartFarmTrip = tripInfo ? tripInfo.isSmartFarm : false;
       const leaveTypeFromSupabase = memberEmail ? approvedLeaves[memberEmail.trim().toLowerCase()] : null;
 
       let statusLabel = '';
       if (leaveTypeFromSupabase) {
         statusLabel = ` - ${leaveTypeFromSupabase}`;
       } else if (isTripFromSupabase) {
-        statusLabel = ' - 출장';
+        statusLabel = isSmartFarmTrip ? ' - 출장(스마트팜)' : ' - 출장(스마트팜 외)';
       } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
         let hasVacation = false;
         let hasMorningHalf = false;
@@ -889,8 +936,8 @@ async function buildDailyReportMarkdown({ date, memberReports }) {
         let emptyText = '* _오늘 기록된 일일 업무 일지가 없습니다._';
         if (leaveTypeFromSupabase) {
           emptyText = `* _금일 ${leaveTypeFromSupabase}입니다._`;
-        } else if (isTripFromSupabase) {
-          emptyText = '* _금일 출장입니다._';
+        } else if (isTripFromSupabase && !isSmartFarmTrip) {
+          emptyText = '* _금일 출장(스마트팜 외)입니다._';
         }
         dailyArchiveContent += `${emptyText}\n\n`;
       } else {
@@ -962,30 +1009,12 @@ async function buildDailyReportMarkdown({ date, memberReports }) {
   }
 }
 
-async function cleanUpDailyReportMessages({ targetUserId, date }) {
+async function cleanUpDailyReportMessages({ channelId, date }) {
   try {
     const dayLabel = formatDayLabel(date);
-    console.log(`  -> [Slack 청소] '${dayLabel}' 일일 보고 메시지 청소 시작...`);
+    console.log(`  -> [Slack 청소] '${dayLabel}' 일일 보고 메시지 청소 시작 (채널 ID: ${channelId})...`);
 
-    // 1. 임시 메시지를 보내 DM 채널 ID 동적 획득
-    const tempMsg = await slack.chat.postMessage({
-      channel: targetUserId,
-      text: '임시 메시지 (청소용)'
-    });
-
-    if (!tempMsg.ok || !tempMsg.channel) {
-      console.warn('  -> [Slack 청소] DM 채널 ID 획득 실패');
-      return false;
-    }
-    const channelId = tempMsg.channel;
-
-    // 임시 메시지 즉시 삭제
-    await slack.chat.delete({
-      channel: channelId,
-      ts: tempMsg.ts
-    });
-
-    // 2. DM 채널의 히스토리 조회 (최대 100개)
+    // 1. 채널의 히스토리 조회 (최대 100개)
     const history = await slack.conversations.history({
       channel: channelId,
       limit: 100
@@ -999,7 +1028,7 @@ async function cleanUpDailyReportMessages({ targetUserId, date }) {
     let deleteCount = 0;
     for (const msg of history.messages) {
       const text = msg.text || '';
-      const isBot = msg.bot_id || msg.user === tempMsg.message?.user;
+      const isBot = msg.bot_id;
 
       const isTargetReportMsg =
         text.includes(dayLabel) ||
@@ -1027,10 +1056,12 @@ async function cleanUpDailyReportMessages({ targetUserId, date }) {
   }
 }
 
-async function sendDailyReport({ date, memberReports, targetUserId }) {
+async function sendDailyReport({ date, memberReports, targetChannelName = '일일업무보고' }) {
   try {
+    const channelId = await findChannelIdByName(targetChannelName);
+    
     // 메시지 발송 전에 기존 메시지를 먼저 싹 지웁니다.
-    await cleanUpDailyReportMessages({ targetUserId, date });
+    await cleanUpDailyReportMessages({ channelId, date });
 
     const dayLabel = formatDayLabel(date);
     
@@ -1038,18 +1069,18 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
     const approvedTrips = await supabaseService.getApprovedBusinessTrips(date);
     const approvedLeaves = await supabaseService.getApprovedLeaves(date);
     
-    // 1. 공통 헤더 메시지 발송 및 실시간 DM 채널 ID 동적 추출
+    // 1. 공통 헤더 메시지 발송
     let headerText = `📢 *[일일 업무 보고 브리핑]* (${dayLabel})\n`;
     headerText += `> 당일 팀원들의 Notion Daily Work Log 취합 요약 브리핑입니다.\n\n`;
     headerText += `---`;
     
-    const headerResponse = await sendDirectMessage(targetUserId, headerText);
-    if (!headerResponse || !headerResponse.channel) {
-      console.error(`헤더 메시지 발송 실패 또는 DM 채널 ID를 획득하지 못했습니다.`);
-      return false;
-    }
-    const realDmChannelId = headerResponse.channel;
-    console.log(`  -> 🎉 정현웅 님과의 실시간 DM 채널 ID 동적 확보 성공: ${realDmChannelId}`);
+    await slack.chat.postMessage({
+      channel: channelId,
+      text: headerText,
+      mrkdwn: true,
+      unfurl_links: false
+    });
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     // [신규] 깃허브 아카이브용 일일 취합 마크다운 빌더 시작
     let dailyArchiveContent = `# 📅 일일 업무 보고 브리핑 (${dayLabel})\n\n`;
@@ -1059,14 +1090,16 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
     for (const rep of memberReports) {
       const cleanName = rep.memberName.replace(' 님', '').trim();
       const memberEmail = MEMBER_EMAILS[cleanName];
-      const isTripFromSupabase = approvedTrips.has(cleanName);
+      const tripInfo = approvedTrips.get(cleanName);
+      const isTripFromSupabase = !!tripInfo;
+      const isSmartFarmTrip = tripInfo ? tripInfo.isSmartFarm : false;
       const leaveTypeFromSupabase = memberEmail ? approvedLeaves[memberEmail.trim().toLowerCase()] : null;
 
       let statusLabel = '';
       if (leaveTypeFromSupabase) {
         statusLabel = ` - ${leaveTypeFromSupabase}`;
       } else if (isTripFromSupabase) {
-        statusLabel = ' - 출장';
+        statusLabel = isSmartFarmTrip ? ' - 출장(스마트팜)' : ' - 출장(스마트팜 외)';
       } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
         let hasVacation = false;
         let hasMorningHalf = false;
@@ -1100,7 +1133,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
 
       // 담당자 헤더 단독 전송
       await slack.chat.postMessage({
-        channel: realDmChannelId,
+        channel: channelId,
         text: `👤 *${cleanName} 님${statusLabel}* - _(${dayLabel})_`,
         mrkdwn: true,
         unfurl_links: false
@@ -1111,12 +1144,12 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
         let emptyText = '* _오늘 기록된 일일 업무 일지가 없습니다._';
         if (leaveTypeFromSupabase) {
           emptyText = `* _금일 ${leaveTypeFromSupabase}입니다._`;
-        } else if (isTripFromSupabase) {
-          emptyText = '* _금일 출장입니다._';
+        } else if (isTripFromSupabase && !isSmartFarmTrip) {
+          emptyText = '* _금일 출장(스마트팜 외)입니다._';
         }
         dailyArchiveContent += `${emptyText}\n\n`;
         await slack.chat.postMessage({
-          channel: realDmChannelId,
+          channel: channelId,
           text: `${emptyText} - _(${dayLabel})_`,
           mrkdwn: true,
           unfurl_links: false
@@ -1225,7 +1258,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
 
           // 일지 단위 메시지 개별 전송
           await slack.chat.postMessage({
-            channel: realDmChannelId,
+            channel: channelId,
             text: `👤 ${cleanName} 님 일지 상세 - (${dayLabel})`,
             blocks: logBlocks,
             unfurl_links: false
@@ -1238,7 +1271,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
 
       // 담당자 구분선 전송
       await slack.chat.postMessage({
-        channel: realDmChannelId,
+        channel: channelId,
         blocks: [
           {
             type: 'divider'
@@ -1272,7 +1305,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
       console.warn(`  -> ⚠️ 일일 보고서 파일 저장 실패 (계속 진행):`, fsErr.message);
     }
 
-    // [신규] 오늘의 업무 요약본을 정현웅 님 DM방으로 추가 전송
+    // [신규] 오늘의 업무 요약본을 채널로 추가 전송
     try {
       const slackSummary = buildDailySummarySection(memberReports);
       if (slackSummary) {
@@ -1285,12 +1318,12 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
           .trim();
 
         await slack.chat.postMessage({
-          channel: realDmChannelId,
+          channel: channelId,
           text: formattedSlackSummary,
           mrkdwn: true,
           unfurl_links: false
         });
-        console.log(`  -> 🎉 오늘의 업무 요약 브리핑을 정현웅 님 DM방으로 추가 전송 완료!`);
+        console.log(`  -> 🎉 오늘의 업무 요약 브리핑을 채널로 추가 전송 완료!`);
       }
     } catch (summaryErr) {
       console.error(`  -> ❌ 슬랙 요약 브리핑 전송 중 오류:`, summaryErr.message);
@@ -1298,7 +1331,7 @@ async function sendDailyReport({ date, memberReports, targetUserId }) {
 
     return true;
   } catch (error) {
-    console.error('일일 업무 브리핑 DM 전송 실패:', error.message);
+    console.error('일일 업무 브리핑 채널 전송 실패:', error.message);
     return false;
   }
 }

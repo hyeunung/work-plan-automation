@@ -12,6 +12,7 @@ on:
           - daily
           - daily-reminder
           - weekly
+          - weekly-reminder
           - overdue-tasks
           - project-sync
 
@@ -57,6 +58,8 @@ jobs:
           echo "🚀 [트리거 실행] 선택된 파이프라인: $TYPE"
           if [ "$TYPE" = "weekly" ]; then
             node -e "require('./src/app').executeWeeklyPipeline()"
+          elif [ "$TYPE" = "weekly-reminder" ]; then
+            node -e "require('./src/app').executeWeeklyReminderPipeline()"
           elif [ "$TYPE" = "daily-reminder" ]; then
             node -e "require('./src/app').executeDailyReminderPipeline()"
           elif [ "$TYPE" = "overdue-tasks" ]; then

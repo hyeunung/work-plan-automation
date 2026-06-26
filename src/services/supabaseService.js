@@ -73,37 +73,52 @@ async function getApprovedLeaves(date) {
  */
 async function getApprovedBusinessTrips(date) {
   try {
-    const data = await supabaseFetch(`/rest/v1/business_trips?approval_status=eq.approved&trip_start_date=lte.${date}&trip_end_date=gte.${date}&select=requester_name,travelers,companions`);
+    const data = await supabaseFetch(`/rest/v1/business_trips?approval_status=eq.approved&trip_start_date=lte.${date}&trip_end_date=gte.${date}&select=requester_name,travelers,companions,project_name,trip_purpose,trip_destination`);
     
-    const tripNames = new Set();
+    const tripMap = new Map();
     if (data && data.length > 0) {
+      const smartFarmKeywords = ['스마트팜', '청송', '농장', '온실', '대차', '방제', '원격제어', '원격 제어', '주행', '생육', '제어', '센서', '하이브리드'];
+      
       data.forEach(item => {
-        // 1. 신청자 이름 추가
+        const proj = item.project_name || '';
+        const purp = item.trip_purpose || '';
+        const dest = item.trip_destination || '';
+        
+        const isSmartFarm = smartFarmKeywords.some(kw => 
+          proj.includes(kw) || purp.includes(kw) || dest.includes(kw)
+        );
+        
+        const travelersList = new Set();
         if (item.requester_name) {
-          tripNames.add(item.requester_name.trim());
+          travelersList.add(item.requester_name.trim());
         }
         
-        // 2. 동반 출장자 이름 추가 (travelers 컬럼 이용)
         if (Array.isArray(item.travelers)) {
           item.travelers.forEach(name => {
-            if (name) tripNames.add(name.trim());
+            if (name) travelersList.add(name.trim());
           });
         }
         
-        // 3. 만약 companions가 있다면 보완적 추가
         if (Array.isArray(item.companions)) {
           item.companions.forEach(comp => {
             if (comp && comp.name) {
-              tripNames.add(comp.name.trim());
+              travelersList.add(comp.name.trim());
             }
           });
         }
+        
+        travelersList.forEach(name => {
+          const existing = tripMap.get(name);
+          tripMap.set(name, {
+            isSmartFarm: existing ? (existing.isSmartFarm || isSmartFarm) : isSmartFarm
+          });
+        });
       });
     }
-    return tripNames;
+    return tripMap;
   } catch (error) {
     console.error(`[Supabase] 출장 승인 목록 조회 실패 (${date}):`, error.message);
-    return new Set();
+    return new Map();
   }
 }
 

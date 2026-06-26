@@ -86,7 +86,16 @@ async function executeWeeklyPipeline() {
   console.log(`==================================================`);
   
   const members = ['김윤회', '김희승', '최현빈'];
-  const { lastWeekMondayDate, thisWeekMondayDate, startDate, endDate, lastWeekTitle, nextWeekTitle } = getReportDateRanges();
+  
+  const refDate = getKstDate();
+  const day = refDate.getDay();
+  // 금요일(5) 실행 시: 기준 날짜를 3일 더해 다음주 월요일로 만듦으로써,
+  // getReportDateRanges가 "이번 주 월~일" 범위를 분석하도록 타겟팅을 통일합니다.
+  if (day === 5) {
+    refDate.setDate(refDate.getDate() + 3);
+  }
+  
+  const { lastWeekMondayDate, thisWeekMondayDate, startDate, endDate, lastWeekTitle, nextWeekTitle } = getReportDateRanges(refDate);
 
   console.log("- 분석 대상 기간 (지난주 월~일): " + startDate + " ~ " + endDate);
   console.log("- 지난주 월요일 (Week Start): " + lastWeekMondayDate);
@@ -172,7 +181,7 @@ async function executeWeeklyPipeline() {
         weekTitle: lastWeekTitle,
         nextWeekTitle: nextWeekTitle,
         memberReports,
-        targetChannelName: '스마트팜-workplan',
+        targetChannelName: '주간업무보고',
         startDate,
         endDate
       });
@@ -239,20 +248,6 @@ async function executeDailyPipeline() {
     return;
   }
 
-  // 1단계: 대상 슬랙 유저 ID 동적 추출 (정현웅 님 ID)
-  let targetUserId = config.slack.adminUserId || 'U0B1U11SBE2';
-  try {
-    const { WebClient } = require('@slack/web-api');
-    const userClient = new WebClient(config.slack.userToken);
-    const authRes = await userClient.auth.test();
-    if (authRes && authRes.user_id) {
-      targetUserId = authRes.user_id;
-      console.log(`  -> [성공] 정현웅 님의 슬랙 ID 동적 확인 완료: ${authRes.user} (ID: ${targetUserId})`);
-    }
-  } catch (authErr) {
-    console.warn(`  -> ⚠️ 유저 ID 동적 조회 실패 (백업 ID 사용):`, authErr.message);
-  }
-
   const memberReports = [];
 
   for (const memberName of members) {
@@ -310,16 +305,16 @@ async function executeDailyPipeline() {
     console.log(`\n🔄 [변동 감지] 일지 보완(추가/수정)이 확인되어 슬랙 및 아카이브 갱신을 진행합니다.`);
   }
 
-  // 5단계: 1:1 HANSL 봇채팅방(DM)으로 보고서 전송
+  // 5단계: '일일업무보고' 비공개 채널로 보고서 전송
   if (memberReports.length > 0) {
     try {
       const isNoticeSent = await slackService.sendDailyReport({
         date: endDate, // 보고서 상 날짜 라벨은 마지막 날짜 기준
         memberReports,
-        targetUserId
+        targetChannelName: '일일업무보고'
       });
       if (isNoticeSent) {
-        console.log(`🎉 [성공] HANSL 봇채팅방으로 일일 업무 보고서 발송 성공!`);
+        console.log(`🎉 [성공] 일일업무보고 채널로 일일 업무 보고서 발송 성공!`);
       } else {
         console.error(`❌ [실패] 일일 업무 보고서 발송 실패`);
       }
@@ -359,14 +354,15 @@ async function executeDailyReminderPipeline(targetDate = null) {
     const approvedLeaves = await supabaseService.getApprovedLeaves(todayStr);
     const approvedTrips = await supabaseService.getApprovedBusinessTrips(todayStr);
 
-    const missingLogSlackIds = [];
-
     for (const name of members) {
       const email = slackService.MEMBER_EMAILS[name];
       if (!email) continue;
 
       const leaveType = approvedLeaves[email];
-      const isTrip = approvedTrips.has(name);
+      
+      const tripInfo = approvedTrips.get(name);
+      const isTrip = !!tripInfo;
+      const isSmartFarmTrip = tripInfo ? tripInfo.isSmartFarm : false;
 
       // 연차, 반차, 공가 등 휴가상태이면 독려 제외
       if (leaveType) {
@@ -374,9 +370,9 @@ async function executeDailyReminderPipeline(targetDate = null) {
         continue;
       }
 
-      // 출장 중이면 독려 제외
-      if (isTrip) {
-        console.log(`  -> 👤 ${name} 님: 출장 상태로 판정되어 일지 독려에서 제외합니다.`);
+      // 스마트팜 외 출장이면 독려 제외 (스마트팜 출장이면 일지 필수 작성)
+      if (isTrip && !isSmartFarmTrip) {
+        console.log(`  -> 👤 ${name} 님: 스마트팜 외 출장 상태로 판정되어 일지 독려에서 제외합니다.`);
         continue;
       }
 
@@ -385,33 +381,86 @@ async function executeDailyReminderPipeline(targetDate = null) {
       const hasWrittenLog = dailyLogs && dailyLogs.length > 0;
 
       if (!hasWrittenLog) {
-        const tripSuffix = isTrip ? ' (출장 중)' : '';
-        console.log(`  -> 👤 ${name} 님: 오늘 일지 미작성 확인${tripSuffix}. 독려 대상 등록.`);
+        const tripSuffix = isTrip ? ' (스마트팜 출장 중)' : '';
+        console.log(`  -> 👤 ${name} 님: 오늘 일지 미작성 확인${tripSuffix}. 개인 독려 DM 발송 중...`);
         
         // 슬랙 멤버 ID 획득
         const slackUserId = await slackService.findUserIdByEmail(email);
         if (slackUserId) {
-          missingLogSlackIds.push(slackUserId);
+          const message = "일일 업무보고 작성시간 입니다 퇴근전에 작성 완료 부탁드립니다.";
+          await slackService.sendDirectMessage(slackUserId, message);
+          console.log(`    -> 🎉 ${name} 님에게 개인 독려 DM 발송 완료!`);
         } else {
-          console.warn(`  ⚠️ ${name} 님의 슬랙 ID를 찾을 수 없어 멘션 대상에서 제외합니다.`);
+          console.warn(`  ⚠️ ${name} 님의 슬랙 ID를 찾을 수 없어 독려 대상에서 제외합니다.`);
         }
       } else {
         console.log(`  -> 👤 ${name} 님: 일지 작성 완료.`);
       }
     }
-
-    // 4. 채널로 일지 미작성자 독려 멘션 메시지 전송
-    if (missingLogSlackIds.length > 0) {
-      await slackService.sendChannelReminder({
-        mentionIds: missingLogSlackIds,
-        targetChannelName: '스마트팜-workplan'
-      });
-    } else {
-      console.log(`  -> 🎉 오늘 모든 활동 근무자가 일지를 정상적으로 작성했습니다!`);
-    }
-
   } catch (error) {
     console.error(`❌ 일지 작성 독려 파이프라인 중 오류 발생:`, error.message);
+  }
+}
+
+/**
+ * 매주 금요일 17:30에 차주 WeeklyPlan 미작성 멤버에게 개인 DM으로 작성 권장 메시지 전송
+ */
+async function executeWeeklyReminderPipeline() {
+  console.log(`\n==================================================`);
+  console.log(`🔔 [자동 주간계획 독려 트리거] ${new Date().toLocaleString()} 주간 계획 작성 독려 파이프라인 시작`);
+  console.log(`==================================================`);
+
+  try {
+    const kstNow = getKstDate();
+    const day = kstNow.getDay();
+
+    // 1. 주말 및 공휴일 검사
+    const todayStr = formatKstDate(kstNow);
+    const isWeekend = day === 0 || day === 6;
+    const isHoliday = await supabaseService.checkIsHoliday(todayStr);
+    if (isWeekend || isHoliday) {
+      console.log(`  -> ☕ 대상일자(${todayStr})는 휴일이므로 독려 메시지 발송을 생략합니다.`);
+      return;
+    }
+
+    // 다음 주 월요일 날짜 계산 (금요일 기준 +3일)
+    const nextWeekMondayObj = new Date(kstNow);
+    nextWeekMondayObj.setDate(kstNow.getDate() + 3);
+    const nextWeekMondayStr = formatKstDate(nextWeekMondayObj);
+    console.log(`- 독려 대상 주간 계획 시작일 (다음 주 월요일): ${nextWeekMondayStr}`);
+
+    const members = ['김윤회', '김희승', '최현빈'];
+
+    for (const name of members) {
+      const email = slackService.MEMBER_EMAILS[name];
+      if (!email) continue;
+      
+      // 노션 주간 계획 조회
+      const weeklyPage = await notionService.getWeeklyPlanPage(nextWeekMondayStr, name);
+      
+      // 주간 계획 작성 여부 판정
+      let isPlanWritten = false;
+      if (weeklyPage) {
+        const richText = weeklyPage.properties['할 일']?.rich_text || [];
+        isPlanWritten = richText.length > 0 && richText.some(elem => elem.plain_text && elem.plain_text.trim().length > 0);
+      }
+
+      if (!isPlanWritten) {
+        console.log(`  -> 👤 ${name} 님: 다음 주 주간 계획 미작성 확인. 개인 독려 DM 발송 중...`);
+        const slackUserId = await slackService.findUserIdByEmail(email);
+        if (slackUserId) {
+          const message = "다음 주 주간 계획(WeeklyPlan) 작성 부탁드립니다. 🙂";
+          await slackService.sendDirectMessage(slackUserId, message);
+          console.log(`    -> 🎉 ${name} 님에게 주간 계획 독려 DM 발송 완료!`);
+        } else {
+          console.warn(`  ⚠️ ${name} 님의 슬랙 ID를 찾을 수 없어 독려 대상에서 제외합니다.`);
+        }
+      } else {
+        console.log(`  -> 👤 ${name} 님: 다음 주 주간 계획 작성 완료.`);
+      }
+    }
+  } catch (error) {
+    console.error(`❌ 주간 계획 작성 독려 파이프라인 중 오류 발생:`, error.message);
   }
 }
 
@@ -522,30 +571,55 @@ async function executeOverdueTasksReminderPipeline() {
 }
 
 if (require.main === module) {
-  cron.schedule('0 9 * * 1', () => {
+  // 주간보고 1차(금요일 18:10), 2차(금요일 21:00), 3차(금요일 23:00) 배치 가동
+  cron.schedule('10 18,21,23 * * 5', () => {
     executeWeeklyPipeline();
   }, {
     scheduled: true,
-    timezone: "Asia/Seoul" // 무조건 한국 서울 시간 기준으로 매주 월요일 오전 09:00에 칼같이 가동!
+    timezone: "Asia/Seoul"
   });
 
-  // 평일(월~금요일) 저녁 19:00 (한국 시간 기준) 일일 업무 일지 봇채팅 전송 배치 가동
-  cron.schedule('0 19 * * 1-5', () => {
+  // 주간보고 최종 확정 (월요일 오전 08:30) 배치 가동
+  cron.schedule('30 8 * * 1', () => {
+    executeWeeklyPipeline();
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
+
+  // 일일 업무보고 1차(18:10), 2차(21:00), 3차(23:00) (월~금요일) 배치 가동
+  cron.schedule('10 18,21,23 * * 1-5', () => {
     executeDailyPipeline();
   }, {
     scheduled: true,
     timezone: "Asia/Seoul"
   });
 
-  // 평일(월~금요일) 저녁 18:00 (한국 시간 기준) 일지 작성 독려 멘션 배치 가동
-  cron.schedule('0 18 * * 1-5', () => {
+  // 일일 업무보고 익일 오전 08:30 감사 (화~토요일) 배치 가동
+  cron.schedule('30 8 * * 2-6', () => {
+    executeDailyPipeline();
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
+
+  // 일일 일지 작성 독려 개인 DM 배치 가동 (평일 17:30)
+  cron.schedule('30 17 * * 1-5', () => {
     executeDailyReminderPipeline();
   }, {
     scheduled: true,
     timezone: "Asia/Seoul"
   });
 
-  // 매시간 정각 (한국 시간 기준) 프로젝트 자동 완료 처리 싱크 가동
+  // 다음 주 주간 계획 작성 독려 개인 DM 배치 가동 (금요일 17:30)
+  cron.schedule('30 17 * * 5', () => {
+    executeWeeklyReminderPipeline();
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
+
+  // 매시간 정각 프로젝트 자동 완료 처리 싱크 가동
   cron.schedule('0 * * * *', () => {
     executeProjectStatusSyncPipeline();
   }, {
@@ -553,7 +627,7 @@ if (require.main === module) {
     timezone: "Asia/Seoul"
   });
 
-  // 평일(월~금요일) 오전 08:30 (한국 시간 기준) 지연 태스크 독려 DM 배치 가동
+  // 평일(월~금요일) 오전 08:30 지연 태스크 독려 DM 배치 가동
   cron.schedule('30 8 * * 1-5', () => {
     executeOverdueTasksReminderPipeline();
   }, {
@@ -561,7 +635,7 @@ if (require.main === module) {
     timezone: "Asia/Seoul"
   });
 
-  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 09:00 (주간보고), 월~금요일 오전 08:30 (지연태스크), 월~금요일 저녁 18:00 (일지작성독려), 월~금요일 저녁 19:00 (일일보고), 매시간 정각 (프로젝트 자동 완료 싱크) 자동 배치가 가동 대기 중입니다.');
+  console.log('⏰ [스케줄러 대기 중] 일일/주간 보고 및 독려 자동 배치가 신규 스케줄 기준으로 정상 가동 대기 중입니다.');
 }
 
 module.exports = {
@@ -569,6 +643,7 @@ module.exports = {
   executeWeeklyPipeline,
   executeDailyPipeline,
   executeDailyReminderPipeline,
+  executeWeeklyReminderPipeline,
   executeProjectStatusSyncPipeline,
   executeOverdueTasksReminderPipeline
 };
