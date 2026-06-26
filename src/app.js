@@ -181,7 +181,7 @@ async function executeWeeklyPipeline() {
         weekTitle: lastWeekTitle,
         nextWeekTitle: nextWeekTitle,
         memberReports,
-        targetChannelName: '주간업무보고',
+        targetChannelName: '스마트팜-workplan',
         startDate,
         endDate
       });

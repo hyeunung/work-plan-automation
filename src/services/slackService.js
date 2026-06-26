@@ -642,7 +642,7 @@ async function cleanUpWeeklyReportMessages({ channelId, weekTitle }) {
  * 모든 직원의 주간 업무 리포트를 취합하여 지정 채널에 100% 무결점 텍스트 리포트 표로 발송합니다.
  * 또한 수동 캔버스 ID 목록이 설정된 경우, 각 캔버스를 실시간 덮어쓰기(수정) 갱신해 줍니다!
  */
-async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targetChannelName = '주간업무보고', startDate, endDate, skipChannelNotice = false }) {
+async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targetChannelName = '스마트팜-workplan', startDate, endDate, skipChannelNotice = false }) {
   try {
     // 1. [초중요 수동 캔버스 ID 실시간 업데이트 동작]
     // config 에 캔버스 ID들이 수동 기입되어 있다면 각 캔버스를 실시간 수정(덮어쓰기)합니다.
