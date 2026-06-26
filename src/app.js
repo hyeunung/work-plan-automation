@@ -287,11 +287,10 @@ async function executeDailyPipeline() {
   if (fs.existsSync(savePath)) {
     const existingMarkdown = fs.readFileSync(savePath, 'utf8');
 
-    // 순수 텍스트 비교를 위해 이미지 태그 및 하이퍼링크 주소를 제거하는 헬퍼
+    // 순수 텍스트 비교를 위해 URL의 쿼리 파라미터만 제거하고 비교하는 헬퍼
     const cleanForCompare = (str) => {
       return str
-        .replace(/!\[.*?\]\(.*?\)/g, '') // 이미지 태그 제거
-        .replace(/https?:\/\/[^\s)>|]+/g, '') // 모든 URL 주소 제거 (만료 파라미터 및 바로가기 포맷 차이 제거)
+        .replace(/(https?:\/\/[^\s)>|?]+)\?[^\s)>|]*/g, '$1') // 모든 URL의 query string만 지우기 (만료 파라미터 차이 제거)
         .replace(/[\s\r\n]+/g, ' ') // 공백 및 줄바꿈 차이 일치화
         .trim();
     };
