@@ -7,7 +7,8 @@ module.exports = {
       weeklyPlan: process.env.NOTION_WEEKLY_PLAN_DB_ID || '36bc640c-cca4-80d5-b0d1-e7171d54f184',
       dailyWorkLog: process.env.NOTION_DAILY_WORK_LOG_DB_ID || '1c3c640c-cca4-8370-9509-019c4a379b92',
       tasks: process.env.NOTION_TASKS_DB_ID || '7eec640c-cca4-82a5-aba5-81fe3b052b93',
-      teamMembers: process.env.NOTION_TEAM_MEMBERS_DB_ID || '4b7c640c-cca4-82ba-99cc-817c501e7fa4'
+      teamMembers: process.env.NOTION_TEAM_MEMBERS_DB_ID || '4b7c640c-cca4-82ba-99cc-817c501e7fa4',
+      projects: process.env.NOTION_PROJECTS_DB_ID || 'd24c640c-cca4-8278-b12e-81dc5c4e7a51'
     }
   },
   slack: {

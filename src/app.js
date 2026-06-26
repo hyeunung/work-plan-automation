@@ -415,6 +415,112 @@ async function executeDailyReminderPipeline(targetDate = null) {
   }
 }
 
+/**
+ * 진행률 100% 프로젝트 감지 및 완료 상태 싱크 파이프라인
+ */
+async function executeProjectStatusSyncPipeline() {
+  console.log(`\n==================================================`);
+  console.log(`🔔 [자동 스케줄 트리거] ${new Date().toLocaleString()} 프로젝트 진행 상황 싱크 시작`);
+  console.log(`==================================================`);
+  
+  try {
+    const completedList = await notionService.syncProjectStatuses();
+    if (completedList.length > 0) {
+      console.log(`-> 총 ${completedList.length}개의 프로젝트가 완료 처리되었습니다. 슬랙 알림 발송 중...`);
+      for (const project of completedList) {
+        await slackService.sendProjectCompletedNotification({
+          projectName: project.name,
+          projectUrl: project.url,
+          pmName: project.pmName
+        });
+      }
+    } else {
+      console.log(`-> 완료 처리할 프로젝트가 없습니다.`);
+    }
+  } catch (error) {
+    console.error(`❌ 프로젝트 싱크 파이프라인 실행 중 오류 발생:`, error.message);
+  }
+}
+
+/**
+ * 지연 태스크 독려 DM 알림 배치 파이프라인 (평일 오전 08:30)
+ */
+async function executeOverdueTasksReminderPipeline() {
+  console.log(`\n==================================================`);
+  console.log(`🔔 [자동 스케줄 트리거] ${new Date().toLocaleString()} 지연 태스크 알림 파이프라인 시작`);
+  console.log(`==================================================`);
+  
+  try {
+    const kstNow = getKstDate();
+    const todayStr = formatKstDate(kstNow);
+    const day = kstNow.getDay();
+
+    // 1. 주말 및 공휴일 패스
+    const isWeekend = day === 0 || day === 6;
+    const isHoliday = await supabaseService.checkIsHoliday(todayStr);
+    if (isWeekend || isHoliday) {
+      console.log(`- ☕ 대상일자(${todayStr})는 휴일(주말: ${isWeekend}, 공휴일: ${isHoliday})이므로 지연 알림 발송을 생략합니다.`);
+      return;
+    }
+
+    // 2. 지연 태스크 그룹 조회
+    const overdueGroup = await notionService.getOverdueTasksByMember();
+    
+    // 3. 멤버별 독려 DM 순차 발송
+    const memberNames = Object.keys(overdueGroup);
+    if (memberNames.length === 0) {
+      console.log(`-> 지연된 태스크를 가진 멤버가 없습니다.`);
+      return;
+    }
+
+    const sentResults = [];
+
+    for (const name of memberNames) {
+      const group = overdueGroup[name];
+      if (group.tasks.length > 0) {
+        const success = await slackService.sendOverdueTasksReminder({
+          memberName: name,
+          position: group.position,
+          tasks: group.tasks
+        });
+        if (success) {
+          sentResults.push({
+            name,
+            position: group.position,
+            count: group.tasks.length
+          });
+        }
+      }
+    }
+
+    // 4. 정현웅(어드민) 님에게 발송 완료 요약 메시지 전송
+    if (sentResults.length > 0) {
+      let targetUserId = config.slack.adminUserId || 'U0B1U11SBE2';
+      try {
+        const { WebClient } = require('@slack/web-api');
+        const userClient = new WebClient(config.slack.userToken);
+        const authRes = await userClient.auth.test();
+        if (authRes && authRes.user_id) {
+          targetUserId = authRes.user_id;
+        }
+      } catch (authErr) {
+        console.warn(`[지연 알림 어드민 공지] 유저 ID 동적 조회 실패 (백업 ID 사용):`, authErr.message);
+      }
+
+      let adminMsg = `📢 *[지연 태스크 독려 DM 발송 완료 안내]*\n`;
+      adminMsg += `금일 팀원들에게 발송된 지연 태스크 독려 DM 내역입니다.\n\n`;
+      sentResults.forEach(res => {
+        adminMsg += `• *${res.name} ${res.position}* 님 : 지연 태스크 ${res.count}건 독려 완료\n`;
+      });
+      
+      await slackService.sendDirectMessage(targetUserId, adminMsg);
+      console.log(`  -> 🎉 정현웅 님에게 지연 태스크 독려 DM 발송 현황 요약 알림 전송 완료`);
+    }
+  } catch (error) {
+    console.error(`❌ 지연 태스크 알림 파이프라인 에러:`, error.message);
+  }
+}
+
 if (require.main === module) {
   cron.schedule('0 9 * * 1', () => {
     executeWeeklyPipeline();
@@ -439,12 +545,30 @@ if (require.main === module) {
     timezone: "Asia/Seoul"
   });
 
-  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 09:00 (주간보고), 월~금요일 저녁 18:00 (일지작성독려), 월~금요일 저녁 19:00 (일일보고) 자동 배치가 가동 대기 중입니다.');
+  // 매시간 정각 (한국 시간 기준) 프로젝트 자동 완료 처리 싱크 가동
+  cron.schedule('0 * * * *', () => {
+    executeProjectStatusSyncPipeline();
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
+
+  // 평일(월~금요일) 오전 08:30 (한국 시간 기준) 지연 태스크 독려 DM 배치 가동
+  cron.schedule('30 8 * * 1-5', () => {
+    executeOverdueTasksReminderPipeline();
+  }, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+  });
+
+  console.log('⏰ [스케줄러 대기 중] 매주 월요일 오전 09:00 (주간보고), 월~금요일 오전 08:30 (지연태스크), 월~금요일 저녁 18:00 (일지작성독려), 월~금요일 저녁 19:00 (일일보고), 매시간 정각 (프로젝트 자동 완료 싱크) 자동 배치가 가동 대기 중입니다.');
 }
 
 module.exports = {
   getReportDateRanges,
   executeWeeklyPipeline,
   executeDailyPipeline,
-  executeDailyReminderPipeline
+  executeDailyReminderPipeline,
+  executeProjectStatusSyncPipeline,
+  executeOverdueTasksReminderPipeline
 };

@@ -332,9 +332,189 @@ async function updateWeeklyPlanRichText(pageId, richTextArray) {
   }
 }
 
+/**
+ * 진행률이 100%에 도달했으나 상태가 '✅ 완료'가 아닌 프로젝트들을 찾아 '✅ 완료'로 일괄 수정하고 목록을 반환합니다.
+ */
+async function syncProjectStatuses() {
+  const updatedProjects = [];
+  try {
+    // 1. 담당자 실명 매핑을 위한 Team Members 정보 조회
+    const memberResponse = await notion.databases.query({
+      database_id: config.notion.db.teamMembers
+    });
+    const memberMap = {};
+    for (const member of memberResponse.results) {
+      const memberName = member.properties['이름']?.title?.[0]?.plain_text || '이름 없음';
+      memberMap[member.id] = memberName;
+    }
+
+    // 2. 프로젝트 목록 조회
+    const response = await notion.databases.query({
+      database_id: config.notion.db.projects
+    });
+
+    for (const page of response.results) {
+      const properties = page.properties;
+      
+      // 프로젝트 명 추출
+      const nameProp = properties['프로젝트 명'] || properties['이름'];
+      const name = nameProp?.title?.[0]?.plain_text || '이름 없음';
+      
+      // 진행률(rollup) 추출
+      const progressProp = properties['진행률'];
+      let progress = null;
+      if (progressProp && progressProp.type === 'rollup' && progressProp.rollup.type === 'number') {
+        progress = progressProp.rollup.number;
+      }
+      
+      // 진행 상황(status) 추출
+      const statusProp = properties['진행 상황'];
+      const statusName = statusProp && statusProp.type === 'status' ? statusProp.status?.name : '';
+
+      // 담당자(PM) 실명 추출
+      const pmRelation = properties['PM']?.relation || [];
+      const pmId = pmRelation[0]?.id;
+      const pmName = pmId ? (memberMap[pmId] || '이름 없음') : '담당자 지정 안 됨';
+
+      if (progress !== null) {
+        const isHundred = (Math.abs(progress - 1.0) < 1e-5) || (Math.abs(progress - 100.0) < 1e-5);
+        if (isHundred && statusName !== '✅ 완료') {
+          // 노션 페이지 업데이트
+          await notion.pages.update({
+            page_id: page.id,
+            properties: {
+              '진행 상황': {
+                status: {
+                  name: '✅ 완료'
+                }
+              }
+            }
+          });
+          console.log(`  -> [자동 완료] 프로젝트 '${name}' 완료 처리 성공! (담당자: ${pmName})`);
+          
+          updatedProjects.push({
+            name,
+            url: formatNotionPageUrl(name, page.id),
+            pmName
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('syncProjectStatuses 에러:', error);
+  }
+  return updatedProjects;
+}
+
+/**
+ * 마감일자가 지났으나 완료되지 않은 태스크들을 스캔하여 담당자별로 그룹화해 반환합니다.
+ */
+async function getOverdueTasksByMember() {
+  const overdueGroup = {}; // { memberName: { position, tasks: [...] } }
+  try {
+    const todayKst = new Date();
+    // KST 시간 보정 (UTC + 9시간) 후 YYYY-MM-DD 형식 추출
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const todayStr = new Date(todayKst.getTime() + kstOffset).toISOString().split('T')[0];
+
+    // 1. 멤버 정보 및 직급 매핑 테이블 빌드
+    const memberResponse = await notion.databases.query({
+      database_id: config.notion.db.teamMembers
+    });
+    const memberMap = {};
+    for (const member of memberResponse.results) {
+      const name = member.properties['이름']?.title?.[0]?.plain_text || '이름 없음';
+      const position = member.properties['직급']?.select?.name || '연구원';
+      memberMap[member.id] = { name, position };
+    }
+
+    // 2. Tasks DB에서 완료되지 않은 모든 태스크 조회 (페이지네이션 처리)
+    let hasMore = true;
+    let startCursor = undefined;
+    const allTasks = [];
+
+    while (hasMore) {
+      const response = await notion.databases.query({
+        database_id: config.notion.db.tasks,
+        start_cursor: startCursor
+      });
+      allTasks.push(...response.results);
+      hasMore = response.has_more;
+      startCursor = response.next_cursor;
+    }
+
+    // 3. 지연 태스크 판별 및 프로젝트명 매핑
+    for (const taskPage of allTasks) {
+      const properties = taskPage.properties;
+      const statusName = properties['진행 상황']?.status?.name || '';
+      
+      // 완료 및 보류된 것은 지연 대상에서 제외
+      if (statusName === '✅ 완료' || statusName === '⏭ 보류') continue;
+
+      // 마감일자 정보 추출
+      const dueDateObj = properties['마감일자']?.date;
+      const dueDate = dueDateObj ? (dueDateObj.end || dueDateObj.start) : null;
+      if (!dueDate) continue; // 마감일이 기재 안 된 것은 제외
+
+      // 마감일이 지났는지 체크 (오늘 날짜 이전인지 판별)
+      if (dueDate < todayStr) {
+        // 담당자 확인
+        const assignRelation = properties['담당자']?.relation || [];
+        const memberId = assignRelation[0]?.id;
+        if (!memberId || !memberMap[memberId]) continue; // 담당자 없는 태스크 스킵
+
+        const memberInfo = memberMap[memberId];
+        const taskTitle = properties['Task']?.title?.[0]?.plain_text || '제목 없음';
+        
+        // 지연일수 계산 (KST 기준)
+        const diffTime = new Date(todayStr) - new Date(dueDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        // 프로젝트명 가져오기 (캐싱 활용)
+        let projectName = '독립 태스크';
+        const projRelation = properties['Project']?.relation || [];
+        if (projRelation.length > 0) {
+          const projId = projRelation[0].id;
+          if (projectCache[projId]) {
+            projectName = projectCache[projId];
+          } else {
+            try {
+              const projPage = await notion.pages.retrieve({ page_id: projId });
+              projectName = projPage.properties['프로젝트 명']?.title?.[0]?.plain_text || 
+                            projPage.properties['이름']?.title?.[0]?.plain_text || '프로젝트';
+              projectCache[projId] = projectName;
+            } catch (err) {
+              console.warn(`프로젝트(${projId}) 조회 실패:`, err.message);
+            }
+          }
+        }
+
+        if (!overdueGroup[memberInfo.name]) {
+          overdueGroup[memberInfo.name] = {
+            position: memberInfo.position,
+            tasks: []
+          };
+        }
+
+        overdueGroup[memberInfo.name].tasks.push({
+          title: taskTitle,
+          dueDate: dueDate,
+          delayDays: diffDays,
+          projectName: projectName
+        });
+      }
+    }
+  } catch (error) {
+    console.error('getOverdueTasksByMember 에러:', error);
+  }
+  return overdueGroup;
+}
+
 module.exports = {
   getWeeklyPlanPage,
   getDailyWorkLogs,
   getTasksMap,
-  updateWeeklyPlanRichText
+  updateWeeklyPlanRichText,
+  syncProjectStatuses,
+  getOverdueTasksByMember
 };

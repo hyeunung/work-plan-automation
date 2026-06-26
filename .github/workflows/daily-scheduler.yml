@@ -12,6 +12,8 @@ on:
           - daily
           - daily-reminder
           - weekly
+          - overdue-tasks
+          - project-sync
 
 
 jobs:
@@ -57,6 +59,10 @@ jobs:
             node -e "require('./src/app').executeWeeklyPipeline()"
           elif [ "$TYPE" = "daily-reminder" ]; then
             node -e "require('./src/app').executeDailyReminderPipeline()"
+          elif [ "$TYPE" = "overdue-tasks" ]; then
+            node -e "require('./src/app').executeOverdueTasksReminderPipeline()"
+          elif [ "$TYPE" = "project-sync" ]; then
+            node -e "require('./src/app').executeProjectStatusSyncPipeline()"
           else
             node -e "require('./src/app').executeDailyPipeline()"
           fi
