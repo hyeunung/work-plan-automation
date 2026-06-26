@@ -853,12 +853,11 @@ function buildDailySummarySection(memberReports, date = null) {
       }
       
       if (overview) {
-        summary += `* **${cleanTitle}**: ${overview}\n`;
+        summary += `* **${cleanTitle}**\n  - *개요*: ${overview}\n`;
       } else if (purpose || meaning) {
-        let logSum = `* **${cleanTitle}**`;
-        if (purpose) logSum += ` (목적: ${purpose})`;
-        if (meaning) logSum += ` (진행 의미: ${meaning})`;
-        summary += logSum + '\n';
+        summary += `* **${cleanTitle}**\n`;
+        if (purpose) summary += `  - *목적*: ${purpose}\n`;
+        if (meaning) summary += `  - *진행 의미*: ${meaning}\n`;
       } else {
         let fallbackText = '';
         if (log.details) {
@@ -869,7 +868,7 @@ function buildDailySummarySection(memberReports, date = null) {
             fallbackText = firstLine.replace(/^[•\-\*\s◦▪▫▶▷·⁃\(\)상세:]+/, '').trim();
           }
         }
-        summary += `* **${cleanTitle}**${fallbackText ? `: ${fallbackText}` : ''}\n`;
+        summary += `* **${cleanTitle}**${fallbackText ? `\n  - *상세*: ${fallbackText}` : ''}\n`;
       }
     }
     summary += `\n`;
@@ -1311,10 +1310,18 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
       const slackSummary = buildDailySummarySection(memberReports, date);
       if (slackSummary) {
         // 슬랙 마크다운 문법에 맞춰 제목과 인용구 보정
-        const formattedSlackSummary = slackSummary
+        let formattedSlackSummary = slackSummary
           .replace(/## 📢 (.*) 업무 요약 브리핑/g, '📢 *[$1 업무 요약 브리핑]*')
           .replace(/> 각 팀원들의 금일 업무 목적 및 진행 의미 요약입니다\./g, '')
-          .replace(/### 👤 (.*) 님/g, '👤 *$1 님*')
+          .replace(/### 👤 (.*) 님/g, '👤 *$1 님*');
+
+        // GFM bullet + bold 문법 `* **제목**` -> 슬랙의 `• *제목*` 으로 보정
+        formattedSlackSummary = formattedSlackSummary.replace(/^\*\s+\*\*([^*]+)\*\*/gm, '• *$1*');
+
+        // GFM sub-bullet + italic 문법 `  - *라벨*: ` -> 슬랙의 `  - _라벨_: ` 으로 보정
+        formattedSlackSummary = formattedSlackSummary.replace(/^\s+-\s+\*([^*]+)\*:/gm, '  - _$1_:');
+
+        formattedSlackSummary = formattedSlackSummary
           .replace(/\n\n\n/g, '\n\n')
           .trim();
 
