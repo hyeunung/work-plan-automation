@@ -650,25 +650,35 @@ async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targe
     for (const rep of memberReports) {
       const manualCanvasId = config.slack.canvasIds[rep.memberName];
       if (manualCanvasId) {
-        try {
-          const res = await updateWeeklyReportCanvas({
-            canvasId: manualCanvasId,
-            weekTitle,
-            nextWeekTitle,
-            memberName: rep.memberName,
-            analysisResults: rep.analysisResults,
-            dailyLogs: rep.dailyLogs,
-            nextWeekPlan: rep.nextWeekPlan,
-            tasksMap: rep.tasksMap,
-            startDate,
-            endDate
-          });
+        if (rep.hasChanges !== false) {
+          try {
+            const res = await updateWeeklyReportCanvas({
+              canvasId: manualCanvasId,
+              weekTitle,
+              nextWeekTitle,
+              memberName: rep.memberName,
+              analysisResults: rep.analysisResults,
+              dailyLogs: rep.dailyLogs,
+              nextWeekPlan: rep.nextWeekPlan,
+              tasksMap: rep.tasksMap,
+              startDate,
+              endDate
+            });
+            updatedCanvases.push({
+              memberName: rep.memberName,
+              canvasUrl: res.canvasUrl
+            });
+          } catch (canvasErr) {
+            console.error(`  -> '${rep.memberName}' 님의 수동 캔버스(${manualCanvasId}) 실시간 덮어쓰기 업데이트 실패:`, canvasErr.message);
+          }
+        } else {
+          // 변동이 없는 경우, canvas 업데이트는 건너뛰고 기존 ID로 URL만 생성하여 포함
+          const canvasUrl = `slack://file?id=${manualCanvasId}&team=${config.slack.teamId || 'T0B2QAU647J'}`;
           updatedCanvases.push({
             memberName: rep.memberName,
-            canvasUrl: res.canvasUrl
+            canvasUrl
           });
-        } catch (canvasErr) {
-          console.error(`  -> '${rep.memberName}' 님의 수동 캔버스(${manualCanvasId}) 실시간 덮어쓰기 업데이트 실패:`, canvasErr.message);
+          console.log(`  -> 👤 '${rep.memberName}' 님의 수동 캔버스 업데이트를 건너뜁니다 (변동 없음).`);
         }
       }
     }
@@ -1512,5 +1522,6 @@ module.exports = {
   buildDailyReportMarkdown,
   cleanUpDailyReportMessages,
   sendProjectCompletedNotification,
-  sendOverdueTasksReminder
+  sendOverdueTasksReminder,
+  buildCanvasMarkdownContent
 };

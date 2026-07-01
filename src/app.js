@@ -149,15 +149,59 @@ async function executeWeeklyPipeline() {
       // 5. 완료 대조 분석
       const analysisResults = analyzer.analyzeWork(weeklyPage, dailyLogs, tasksMap);
 
-      // 6. 노션 자동 완료 ✅ 및 멘션 Write-Back
-      const updatedRichText = analyzer.buildUpdatedRichText(weeklyPage, analysisResults);
-      await notionService.updateWeeklyPlanRichText(weeklyPage.id, updatedRichText);
-      console.log(`  -> 노션 본문 완료 체크(✅) 및 멘션 업데이트 완료`);
-
-      // 7. 이번 주 신규 계획 정보 파싱
+      // 6. 이번 주 신규 계획 정보 파싱
       let nextWeekPlan = [];
       if (nextWeeklyPage) {
         nextWeekPlan = analyzer.analyzeWork(nextWeeklyPage, [], tasksMap);
+      }
+
+      // 7. 새로 생성된 마크다운 결과물과 기존 아카이브 파일 비교
+      const fs = require('fs');
+      const path = require('path');
+      const safeWeekTitle = lastWeekTitle.replace(/\s+/g, '');
+      const cleanMemberName = memberName.replace(' 님', '').trim();
+      const filename = `${safeWeekTitle}_${cleanMemberName}.md`;
+      const savePath = path.join(__dirname, '../docs/weekly-reports', filename);
+
+      const currentMarkdown = slackService.buildCanvasMarkdownContent({
+        weekTitle: lastWeekTitle,
+        nextWeekTitle: nextWeekTitle,
+        memberName,
+        analysisResults,
+        dailyLogs,
+        nextWeekPlan,
+        tasksMap,
+        startDate,
+        endDate
+      });
+
+      let hasChanges = true;
+      if (fs.existsSync(savePath)) {
+        const existingMarkdown = fs.readFileSync(savePath, 'utf8');
+        const cleanForCompare = (str) => {
+          return str
+            .replace(/(https?:\/\/[^\s)>|?]+)\?[^\s)>|]*/g, '$1') // 모든 URL의 query string만 지우기 (만료 파라미터 차이 제거)
+            .replace(/[\s\r\n]+/g, ' ') // 공백 및 줄바꿈 차이 일치화
+            .trim();
+        };
+
+        if (cleanForCompare(currentMarkdown) === cleanForCompare(existingMarkdown)) {
+          hasChanges = false;
+          console.log(`  -> 👤 '${memberName}' 님 주간 계획 변동 사항 없음 (스킵 가능)`);
+        } else {
+          console.log(`  -> 👤 '${memberName}' 님 주간 계획 변동 감지 (업데이트 필요)`);
+        }
+      } else {
+        console.log(`  -> 👤 '${memberName}' 님 주간 계획 아카이브 없음 (신규 생성 필요)`);
+      }
+
+      if (hasChanges) {
+        // 8. 노션 자동 완료 ✅ 및 멘션 Write-Back
+        const updatedRichText = analyzer.buildUpdatedRichText(weeklyPage, analysisResults);
+        await notionService.updateWeeklyPlanRichText(weeklyPage.id, updatedRichText);
+        console.log(`  -> 노션 본문 완료 체크(✅) 및 멘션 업데이트 완료`);
+      } else {
+        console.log(`  -> 노션 본문 업데이트 건너뜀 (변동 사항 없음)`);
       }
 
       memberReports.push({
@@ -165,12 +209,22 @@ async function executeWeeklyPipeline() {
         analysisResults,
         dailyLogs,
         nextWeekPlan,
-        tasksMap
+        tasksMap,
+        hasChanges
       });
 
     } catch (error) {
       console.error(`  ❌ '${memberName}' 님 파이프라인 구동 중 오류 발생:`, error.message);
     }
+  }
+
+  // 모든 멤버가 변동 사항이 없는지 확인
+  const anyChanges = memberReports.some(rep => rep.hasChanges !== false);
+  if (!anyChanges && memberReports.length > 0) {
+    console.log(`\n==================================================`);
+    console.log(`⏭️  [스킵] 모든 팀원의 주간 업무 보고 변동 사항이 없습니다.`);
+    console.log(`==================================================`);
+    return;
   }
 
   // 7. 채널 최종 취합 보고 발송 (#스마트팜-workplan)
@@ -535,7 +589,8 @@ async function executeOverdueTasksReminderPipeline() {
           sentResults.push({
             name,
             position: group.position,
-            count: group.tasks.length
+            count: group.tasks.length,
+            tasks: group.tasks
           });
         }
       }
@@ -559,9 +614,13 @@ async function executeOverdueTasksReminderPipeline() {
       adminMsg += `금일 팀원들에게 발송된 지연 태스크 독려 DM 내역입니다.\n\n`;
       sentResults.forEach(res => {
         adminMsg += `• *${res.name} ${res.position}* 님 : 지연 태스크 ${res.count}건 독려 완료\n`;
+        res.tasks.forEach(t => {
+          adminMsg += `  - [${t.projectName}] ${t.title} (마감: ${t.dueDate}, ${t.delayDays}일 지연)\n`;
+        });
+        adminMsg += `\n`;
       });
       
-      await slackService.sendDirectMessage(targetUserId, adminMsg);
+      await slackService.sendDirectMessage(targetUserId, adminMsg.trim());
       console.log(`  -> 🎉 정현웅 님에게 지연 태스크 독려 DM 발송 현황 요약 알림 전송 완료`);
     }
   } catch (error) {
