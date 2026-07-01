@@ -242,6 +242,30 @@ async function executeWeeklyPipeline() {
 
       if (isNoticeSent) {
         console.log(`🎉 [성공] Slack 채널 주간 보고 취합 메시지 전송 성공!`);
+
+        // 모든 팀원의 주간 계획이 완료되었는지 확인 (3명 전원의 weeklyPage가 존재했는지 확인)
+        const allCompleted = members.every(mName => 
+          memberReports.some(rep => rep.memberName === mName)
+        );
+
+        if (allCompleted) {
+          let targetUserId = config.slack.adminUserId || 'U0B1U11SBE2';
+          try {
+            const { WebClient } = require('@slack/web-api');
+            const userClient = new WebClient(config.slack.userToken);
+            const authRes = await userClient.auth.test();
+            if (authRes && authRes.user_id) {
+              targetUserId = authRes.user_id;
+            }
+          } catch (authErr) {
+            console.warn(`[주간 알림 어드민 공지] 유저 ID 동적 조회 실패 (백업 ID 사용):`, authErr.message);
+          }
+
+          let adminMsg = `📢 *[주간 업무 보고 취합 완료]*\n`;
+          adminMsg += `${lastWeekTitle} 주간 업무 보고가 지연/누락 인원 없이 전원 완료(3명 전체)되어 채널에 공유되었습니다.`;
+          await slackService.sendDirectMessage(targetUserId, adminMsg);
+          console.log(`  -> 🎉 모든 팀원 주간계획 작성 완료 확인되어 정현웅 님에게 취합 완료 알림 DM 전송 성공`);
+        }
       } else {
         console.error(`❌ [실패] Slack 메시지 전송 실패`);
       }
@@ -368,6 +392,29 @@ async function executeDailyPipeline() {
       });
       if (isNoticeSent) {
         console.log(`🎉 [성공] 일일업무보고 채널로 일일 업무 보고서 발송 성공!`);
+
+        // 모든 팀원의 일일 보고 작성이 완료되었는지 확인 (휴가/출장자 포함)
+        const approvedLeaves = await supabaseService.getApprovedLeaves(endDate);
+        const approvedTrips = await supabaseService.getApprovedBusinessTrips(endDate);
+        
+        const allCompleted = memberReports.every(rep => {
+          const cleanName = rep.memberName.replace(' 님', '').trim();
+          const email = slackService.MEMBER_EMAILS[cleanName];
+          const hasWritten = rep.dailyLogs && rep.dailyLogs.length > 0;
+          const isLeave = email ? !!approvedLeaves[email.trim().toLowerCase()] : false;
+          const tripInfo = approvedTrips.get(cleanName);
+          const isOutsideTrip = tripInfo ? !tripInfo.isSmartFarm : false;
+          
+          return hasWritten || isLeave || isOutsideTrip;
+        });
+
+        if (allCompleted) {
+          const formattedDate = endDate.replace(/-/g, '/').slice(5); // MM/DD
+          let adminMsg = `📢 *[일일 업무 보고 취합 완료]*\n`;
+          adminMsg += `${formattedDate} 일일 업무 보고가 지연/누락 인원 없이 전원 완료(휴가/출장 포함)되어 채널에 공유되었습니다.`;
+          await slackService.sendDirectMessage(targetUserId, adminMsg);
+          console.log(`  -> 🎉 모든 팀원 작성 완료 확인되어 정현웅 님에게 취합 완료 알림 DM 전송 성공`);
+        }
       } else {
         console.error(`❌ [실패] 일일 업무 보고서 발송 실패`);
       }
