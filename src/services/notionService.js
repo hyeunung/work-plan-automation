@@ -500,7 +500,8 @@ async function getOverdueTasksByMember() {
           title: taskTitle,
           dueDate: dueDate,
           delayDays: diffDays,
-          projectName: projectName
+          projectName: projectName,
+          url: taskPage.url
         });
       }
     }

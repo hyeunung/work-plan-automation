@@ -1497,7 +1497,8 @@ async function sendOverdueTasksReminder({ memberName, position, tasks }) {
     text += `각 항목별로, 완료된 건은 "✅ 완료"로 변경해주시고 / 아직 진행 중이면 종료일자를 연장해주세요.\n\n`;
 
     sortedTasks.forEach(task => {
-      text += `D+${task.delayDays} ${task.title} — ${task.projectName}\n`;
+      const titleLink = task.url ? `<${task.url}|${task.title}>` : task.title;
+      text += `D+${task.delayDays} ${titleLink} — ${task.projectName}\n`;
     });
 
     text += `\n확인 후 업데이트 부탁드립니다. 감사합니다!`;
