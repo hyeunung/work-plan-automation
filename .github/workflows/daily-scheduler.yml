@@ -84,5 +84,10 @@ jobs:
           else
             echo "📝 새 마크다운 보고서를 깃허브 저장소에 기록합니다."
             git commit -m "chore: [자동 아카이브] 일일/주간 업무 보고서 보존"
-            git push
+            # 동시 실행된 다른 런이 먼저 푸시했을 수 있으므로, 최신으로 맞춘 뒤 푸시 (최대 3회 재시도)
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && break
+              echo "⚠️ 푸시 충돌 감지 - 재시도 ($i/3)"
+              sleep 5
+            done
           fi
