@@ -227,15 +227,15 @@ async function executeWeeklyPipeline(forceSend = false) {
     return;
   }
 
-  // 7. 채널 최종 취합 보고 발송 (#스마트팜-workplan + 비공개 #weekly-report)
+  // 7. 채널 최종 취합 보고 발송 (#스마트팜-workplan)
   if (memberReports.length > 0) {
     try {
-      console.log(`\n- '#스마트팜-workplan' 및 '#weekly-report' 채널로 취합 격자 표 보고서 발송 중...`);
+      console.log(`\n- '#스마트팜-workplan' 채널로 취합 격자 표 보고서 발송 중...`);
       const isNoticeSent = await slackService.sendWeeklyReport({
         weekTitle: lastWeekTitle,
         nextWeekTitle: nextWeekTitle,
         memberReports,
-        targetChannelName: ['스마트팜-workplan', 'weekly-report'],
+        targetChannelName: '스마트팜-workplan',
         startDate,
         endDate
       });
