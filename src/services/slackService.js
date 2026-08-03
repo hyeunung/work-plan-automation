@@ -16,12 +16,14 @@ const userIdCache = {};
 
 /**
  * 채널명(예: '스마트팜-workplan')을 받아 해당하는 실시간 슬랙 채널 ID를 조회합니다.
+ * strict가 true면 채널을 찾지 못했을 때 기본 채널로 폴백하지 않고 null을 반환합니다.
+ * (비공개 채널은 봇이 멤버가 아니면 목록에 노출되지 않으므로, 폴백 시 엉뚱한 채널로 발송되는 사고 방지용)
  */
-async function findChannelIdByName(channelName) {
+async function findChannelIdByName(channelName, strict = false) {
   try {
     const cleanName = channelName.replace('#', '').trim();
     let cursor;
-    
+
     while (true) {
       const response = await slack.conversations.list({
         types: 'public_channel,private_channel',
@@ -37,11 +39,15 @@ async function findChannelIdByName(channelName) {
       cursor = response.response_metadata?.next_cursor;
       if (!cursor) break;
     }
-    
+
+    if (strict) {
+      console.error(`  -> ❌ '#${cleanName}' 채널을 찾을 수 없습니다. (비공개 채널이라면 HANSL 봇이 채널 멤버로 초대되어 있어야 합니다.)`);
+      return null;
+    }
     return config.slack.channelId;
   } catch (error) {
     console.error(`채널명 '${channelName}' 조회 실패:`, error.message);
-    return config.slack.channelId;
+    return strict ? null : config.slack.channelId;
   }
 }
 
@@ -694,29 +700,45 @@ async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targe
     }
 
     // 2. 통합 알림 채널 메시지 발송 (skipChannelNotice가 false일 때만 봇 명의로 알림 전송)
+    // targetChannelName은 단일 채널명(문자열) 또는 채널명 배열을 지원합니다.
     if (!skipChannelNotice && updatedCanvases.length > 0) {
-      const channelId = await findChannelIdByName(targetChannelName);
-      
-      // 메시지 중복 방지를 위해 기존 알림 청소
-      await cleanUpWeeklyReportMessages({ channelId, weekTitle });
-      
-      for (let i = 0; i < updatedCanvases.length; i++) {
-        const uc = updatedCanvases[i];
-        const clean = uc.memberName.replace(' 님', '').trim();
-        
-        // 실 서비스 배포 시 <!channel> 전체 멘션이 덧붙여집니다.
-        const isLast = i === updatedCanvases.length - 1;
-        const channelMention = isLast ? ' <!channel>' : '';
-        const noticeText = `👤 *[${clean}]* ${weekTitle} 주간 업무 브리핑 캔버스 업데이트 완료 ✅ <${uc.canvasUrl}|바로가기>${channelMention}`;
+      const channelNames = Array.isArray(targetChannelName) ? targetChannelName : [targetChannelName];
+      const sentChannelIds = new Set();
 
-        await slack.chat.postMessage({
-          channel: channelId,
-          text: noticeText,
-          mrkdwn: true,
-          unfurl_links: false,
-          unfurl_media: false
-        });
-        console.log(`  -> 🤖 HANSL 봇이 채널에 '${clean}'의 캔버스 바로가기 알림을 전송 완료했습니다. (마지막 멘션 여부: ${isLast})`);
+      for (const channelName of channelNames) {
+        // strict 모드: 채널을 못 찾으면 기본 채널로 폴백하지 않고 해당 채널만 건너뜀 (엉뚱한 채널 발송 사고 방지)
+        const channelId = await findChannelIdByName(channelName, true);
+        if (!channelId) {
+          console.error(`  -> ⚠️ '#${channelName}' 채널로의 주간 보고 알림 발송을 건너뜁니다.`);
+          continue;
+        }
+        if (sentChannelIds.has(channelId)) {
+          console.log(`  -> 💡 '#${channelName}' 채널은 이미 발송된 채널과 동일하여 건너뜁니다.`);
+          continue;
+        }
+        sentChannelIds.add(channelId);
+
+        // 메시지 중복 방지를 위해 기존 알림 청소
+        await cleanUpWeeklyReportMessages({ channelId, weekTitle });
+
+        for (let i = 0; i < updatedCanvases.length; i++) {
+          const uc = updatedCanvases[i];
+          const clean = uc.memberName.replace(' 님', '').trim();
+
+          // 실 서비스 배포 시 <!channel> 전체 멘션이 덧붙여집니다.
+          const isLast = i === updatedCanvases.length - 1;
+          const channelMention = isLast ? ' <!channel>' : '';
+          const noticeText = `👤 *[${clean}]* ${weekTitle} 주간 업무 브리핑 캔버스 업데이트 완료 ✅ <${uc.canvasUrl}|바로가기>${channelMention}`;
+
+          await slack.chat.postMessage({
+            channel: channelId,
+            text: noticeText,
+            mrkdwn: true,
+            unfurl_links: false,
+            unfurl_media: false
+          });
+          console.log(`  -> 🤖 HANSL 봇이 '#${channelName}' 채널에 '${clean}'의 캔버스 바로가기 알림을 전송 완료했습니다. (마지막 멘션 여부: ${isLast})`);
+        }
       }
     } else {
       console.log(`  -> 💡 슬랙 채널 알림 메시지 발송이 옵션(skipChannelNotice)에 의해 생략되었습니다.`);
