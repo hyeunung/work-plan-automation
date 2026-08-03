@@ -80,9 +80,9 @@ function getReportDateRanges(todayDate = getKstDate()) {
 /**
  * 매주 월요일 실행될 주간 보고 메인 파이프라인
  */
-async function executeWeeklyPipeline() {
+async function executeWeeklyPipeline(forceSend = false) {
   console.log(`\n==================================================`);
-  console.log(`🔔 [자동 스케줄 트리거] ${new Date().toLocaleString()} 주간 업무 보고 파이프라인 시작`);
+  console.log(`🔔 [자동 스케줄 트리거] ${new Date().toLocaleString()} 주간 업무 보고 파이프라인 시작${forceSend ? ' (강제 재발송 모드)' : ''}`);
   console.log(`==================================================`);
   
   const members = ['김윤회', '김희승', '최현빈'];
@@ -218,9 +218,9 @@ async function executeWeeklyPipeline() {
     }
   }
 
-  // 모든 멤버가 변동 사항이 없는지 확인
+  // 모든 멤버가 변동 사항이 없는지 확인 (강제 재발송 모드에서는 스킵하지 않음)
   const anyChanges = memberReports.some(rep => rep.hasChanges !== false);
-  if (!anyChanges && memberReports.length > 0) {
+  if (!anyChanges && memberReports.length > 0 && !forceSend) {
     console.log(`\n==================================================`);
     console.log(`⏭️  [스킵] 모든 팀원의 주간 업무 보고 변동 사항이 없습니다.`);
     console.log(`==================================================`);
