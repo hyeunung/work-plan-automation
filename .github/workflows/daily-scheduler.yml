@@ -14,6 +14,7 @@ on:
           - weekly
           - weekly-resend
           - weekly-reminder
+          - smartfarm-weekly
           - overdue-tasks
           - project-sync
 
@@ -54,6 +55,7 @@ jobs:
           SLACK_CANVAS_ID_HYUNBIN: ${{ secrets.SLACK_CANVAS_ID_HYUNBIN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           TYPE="${{ github.event.inputs.pipeline_type }}"
           echo "🚀 [트리거 실행] 선택된 파이프라인: $TYPE"
@@ -63,6 +65,8 @@ jobs:
             node -e "require('./src/app').executeWeeklyPipeline(true)"
           elif [ "$TYPE" = "weekly-reminder" ]; then
             node -e "require('./src/app').executeWeeklyReminderPipeline()"
+          elif [ "$TYPE" = "smartfarm-weekly" ]; then
+            node -e "require('./src/app').executeSmartfarmWeeklyPipeline().catch(e => { console.error(e); process.exit(1); })"
           elif [ "$TYPE" = "daily-reminder" ]; then
             node -e "require('./src/app').executeDailyReminderPipeline()"
           elif [ "$TYPE" = "overdue-tasks" ]; then

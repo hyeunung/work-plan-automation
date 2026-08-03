@@ -745,6 +745,7 @@ if (require.main === module) {
 
 module.exports = {
   getReportDateRanges,
+  executeSmartfarmWeeklyPipeline: (...args) => require('./services/smartfarmWeeklyReport').executeSmartfarmWeeklyPipeline(...args),
   executeWeeklyPipeline,
   executeDailyPipeline,
   executeDailyReminderPipeline,
