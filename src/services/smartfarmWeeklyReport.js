@@ -19,7 +19,7 @@ const notionService = require('./notionService');
 const aiSummarizer = require('./aiSummarizer');
 
 const MEMBERS = ['김윤회', '최현빈', '김희승'];
-const PART_MAP = { '김윤회': '자율주행 파트', '최현빈': '자율주행 파트', '김희승': '스마트팜 제어 파트' };
+const PART_MAP = { '김윤회': '무인대차 파트', '최현빈': '무인대차 파트', '김희승': '스마트팜 제어 파트' };
 const REPORT_CHANNEL_ID = process.env.SLACK_WEEKLY_REPORT_CHANNEL_ID || 'C0BLRVAGETS';
 const GUIDE_PATH = path.join(__dirname, '../../docs/weekly-report-guide.md');
 const ARCHIVE_DIR = path.join(__dirname, '../../docs/smartfarm-weekly');
