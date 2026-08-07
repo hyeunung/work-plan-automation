@@ -3,6 +3,7 @@ const config = require('../config');
 const fs = require('fs');
 const path = require('path');
 const supabaseService = require('./supabaseService');
+const aiSummarizer = require('./aiSummarizer');
 
 const slack = new WebClient(config.slack.token);
 
@@ -923,7 +924,7 @@ function applyGlossaryFilter(text) {
  */
 function buildDailySummarySection(memberReports, date = null) {
   const dateLabel = date ? formatDayLabel(date) : '오늘';
-  let summary = `## 📢 ${dateLabel} 업무 요약 브리핑\n\n`;
+  let summary = `## 📝 ${dateLabel} 업무 요약 브리핑\n\n`;
   summary += `> 각 팀원들의 금일 업무 목적 및 진행 의미 요약입니다.\n\n`;
   
   let hasAnyLog = false;
@@ -1174,9 +1175,9 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
     const approvedLeaves = await supabaseService.getApprovedLeaves(date);
     
     // 1. 공통 헤더 메시지 발송
-    let headerText = `📢 *[일일 업무 보고 브리핑]* (${dayLabel})\n`;
-    headerText += `> 당일 팀원들의 Notion Daily Work Log 취합 요약 브리핑입니다.\n\n`;
-    headerText += `---`;
+    let headerText = `▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n`;
+    headerText += `📢 *[일일 업무 보고 브리핑]* (${dayLabel})\n`;
+    headerText += `> 당일 팀원들의 Notion Daily Work Log 취합 요약 브리핑입니다.`;
     
     await slack.chat.postMessage({
       channel: channelId,
@@ -1299,6 +1300,9 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
 
             if (log.details && log.details.trim()) {
               const detailLines = log.details.trim().split('\n');
+              const formattedDetailLines = []; // AI 구조화 입력용 (이미지 제외 텍스트 줄)
+              let rawItemBody = ''; // AI 실패 시 폴백용 기존 나열 본문
+
               for (const line of detailLines) {
                 if (line.trim()) {
                   const lineImages = [];
@@ -1313,17 +1317,19 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
                       }
                     }
                   } else {
+                    // 깃허브 아카이브는 원문 그대로 무손실 기록 (변경 감지 비교의 기준이기도 함)
                     dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
-                    
+                    formattedDetailLines.push(formattedLine.trim());
+
                     // 글자수 제한 체크 (3000자 초과 방지)
                     const appendStr = `  - (상세: ${formattedLine.trim()})\n`;
-                    if (logItemText.length + appendStr.length > 2800) {
+                    if (rawItemBody.length + appendStr.length > 2800) {
                       const limitNotice = `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
-                      if (!logItemText.includes(limitNotice)) {
-                        logItemText += limitNotice;
+                      if (!rawItemBody.includes(limitNotice)) {
+                        rawItemBody += limitNotice;
                       }
                     } else {
-                      logItemText += appendStr;
+                      rawItemBody += appendStr;
                     }
 
                     if (lineImages.length > 0) {
@@ -1332,6 +1338,26 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
                       }
                     }
                   }
+                }
+              }
+
+              // [AI 정리] 슬랙 메시지 본문은 선임 상급자가 읽기 편하게 구조화 (내용 무손실)
+              if (formattedDetailLines.length > 0) {
+                try {
+                  const organized = await aiSummarizer.organizeMemberLog(cleanTitle, formattedDetailLines);
+                  let organizedBody = organized
+                    .split('\n')
+                    .map(l => (l.trim() ? `  ${l.replace(/\s+$/, '')}` : ''))
+                    .join('\n') + '\n';
+                  if (logItemText.length + organizedBody.length > 2900) {
+                    organizedBody = organizedBody.slice(0, 2900 - logItemText.length)
+                      + `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
+                  }
+                  logItemText += organizedBody;
+                  console.log(`  -> [AI 정리] '${cleanName}' 님 '${cleanTitle}' 일반 보고 구조화 완료`);
+                } catch (aiErr) {
+                  console.warn(`  -> ⚠️ [AI 정리] 실패, 원문 나열로 폴백 (${cleanTitle}):`, aiErr.message);
+                  logItemText += rawItemBody;
                 }
               }
             }
@@ -1426,12 +1452,25 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
 
     // [신규] 오늘의 업무 요약본을 채널로 추가 전송
     try {
-      const slackSummary = buildDailySummarySection(memberReports, date);
+      // [AI 요약] 대표이사용 요약 브리핑 생성 (실패 시 기존 정규식 추출로 폴백)
+      let slackSummary = '';
+      try {
+        const aiBody = await aiSummarizer.summarizeDailyReports(memberReports, dayLabel);
+        if (aiBody) {
+          slackSummary = `## 📝 ${dayLabel} 업무 요약 브리핑\n\n> 각 팀원들의 금일 업무 목적 및 진행 의미 요약입니다.\n\n${aiBody}`;
+          console.log('  -> [AI 요약] 대표이사용 요약 브리핑 생성 완료');
+        }
+      } catch (aiErr) {
+        console.warn('  -> ⚠️ [AI 요약] 실패, 기존 추출 방식으로 폴백:', aiErr.message);
+      }
+      if (!slackSummary) {
+        slackSummary = buildDailySummarySection(memberReports, date);
+      }
       if (slackSummary) {
         // 슬랙 마크다운 문법에 맞춰 제목과 인용구 보정
         let formattedSlackSummary = slackSummary
-          .replace(/## 📢 (.*) 업무 요약 브리핑/g, '📢 *[$1 업무 요약 브리핑]*')
-          .replace(/> 각 팀원들의 금일 업무 목적 및 진행 의미 요약입니다\./g, '')
+          .replace(/## 📝 (.*) 업무 요약 브리핑/g, '──────────────────────────────────────\n📝 *[$1 업무 요약 브리핑]*')
+          .replace(/> 각 팀원들의 금일 업무 목적 및 진행 의미 요약입니다\.\n*/g, '')
           .replace(/### 👤 (.*) 님/g, '👤 *$1 님*');
 
         // GFM bullet + bold 문법 `* **제목**` -> 슬랙의 `• *제목*` 으로 보정
@@ -1440,8 +1479,11 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
         // GFM sub-bullet + italic 문법 `  - *라벨*: ` -> 슬랙의 `  - _라벨_: ` 으로 보정
         formattedSlackSummary = formattedSlackSummary.replace(/^\s+-\s+\*([^*]+)\*:/gm, '  - _$1_:');
 
+        // GFM 인라인 강조 `**텍스트**` -> 슬랙의 `*텍스트*` 로 보정 (AI 요약 본문용)
+        formattedSlackSummary = formattedSlackSummary.replace(/\*\*([^*\n]+)\*\*/g, '*$1*');
+
         formattedSlackSummary = formattedSlackSummary
-          .replace(/\n\n\n/g, '\n\n')
+          .replace(/\n{3,}/g, '\n\n')
           .trim();
 
         await slack.chat.postMessage({
