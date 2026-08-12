@@ -85,7 +85,7 @@ async function executeWeeklyPipeline(forceSend = false) {
   console.log(`🔔 [자동 스케줄 트리거] ${new Date().toLocaleString()} 주간 업무 보고 파이프라인 시작${forceSend ? ' (강제 재발송 모드)' : ''}`);
   console.log(`==================================================`);
   
-  const members = ['김윤회', '김희승', '최현빈'];
+  const members = ['김희승', '김윤회', '최현빈'];
   
   const refDate = getKstDate();
   const day = refDate.getDay();
@@ -289,7 +289,7 @@ async function executeDailyPipeline() {
   console.log(`🔔 [자동 일일 스케줄 트리거] ${new Date().toLocaleString()} 일일 업무 보고 파이프라인 시작 (${modeStr})`);
   console.log(`==================================================`);
 
-  const members = ['김윤회', '김희승', '최현빈'];
+  const members = ['김희승', '김윤회', '최현빈'];
   
   if (isMorning) {
     kstNow.setDate(kstNow.getDate() - 1);
@@ -448,7 +448,7 @@ async function executeDailyReminderPipeline(targetDate = null) {
       return;
     }
 
-    const members = ['김윤회', '김희승', '최현빈'];
+    const members = ['김희승', '김윤회', '최현빈'];
     
     // 2. Supabase에서 오늘 휴가 및 출장 정보 가져오기
     const approvedLeaves = await supabaseService.getApprovedLeaves(todayStr);
@@ -529,7 +529,7 @@ async function executeWeeklyReminderPipeline() {
     const nextWeekMondayStr = formatKstDate(nextWeekMondayObj);
     console.log(`- 독려 대상 주간 계획 시작일 (다음 주 월요일): ${nextWeekMondayStr}`);
 
-    const members = ['김윤회', '김희승', '최현빈'];
+    const members = ['김희승', '김윤회', '최현빈'];
 
     for (const name of members) {
       const email = slackService.MEMBER_EMAILS[name];
