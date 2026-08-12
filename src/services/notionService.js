@@ -244,6 +244,21 @@ async function getPageContentDetails(blockId) {
           const url = block.video.file?.url || block.video.external?.url || '';
           const label = caption ? `동영상 첨부: ${caption}` : '동영상 첨부';
           blockText = url ? `[${label}](${url})` : `[${label}]`;
+        } else if (block.type === 'code' && block.code?.rich_text) {
+          // 마크다운 원문을 코드 블록으로 붙여넣는 경우가 있어, 내용을 줄 단위 텍스트로 수집
+          blockText = block.code.rich_text
+            .map(t => t.plain_text)
+            .join('')
+            .split('\n')
+            .map(line => line.replace(/^[#>\-\*\s]+/, '').trim())
+            .filter(Boolean)
+            .join('\n');
+        } else if (block.type === 'quote' && block.quote?.rich_text) {
+          blockText = block.quote.rich_text.map(t => t.plain_text).join('');
+        } else if (block.type === 'callout' && block.callout?.rich_text) {
+          blockText = block.callout.rich_text.map(t => t.plain_text).join('');
+        } else if (block.type === 'toggle' && block.toggle?.rich_text) {
+          blockText = block.toggle.rich_text.map(t => t.plain_text).join('');
         }
 
         if (blockText.trim()) {
