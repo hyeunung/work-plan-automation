@@ -1,6 +1,31 @@
 const config = require('../config');
 
 /**
+ * leave.type DB 코드값 -> 보고용 한글 라벨 매핑
+ * (슬랙 브리핑에 half_pm 같은 코드값이 그대로 노출되는 문제 방지)
+ */
+const LEAVE_TYPE_LABELS = {
+  annual: '연차',
+  full: '연차',
+  half_am: '오전반차',
+  half_pm: '오후반차',
+  official: '공가',
+  sick: '병가',
+  special: '경조휴가'
+};
+
+/**
+ * 연차 타입 코드를 한글 라벨로 변환합니다. 매핑에 없는 값은 원문을 그대로 반환합니다.
+ */
+function formatLeaveType(type) {
+  if (!type) return '';
+  const key = String(type).trim().toLowerCase();
+  if (LEAVE_TYPE_LABELS[key]) return LEAVE_TYPE_LABELS[key];
+  // 이미 한글로 들어온 경우(연차/오전반차 등)는 그대로 사용
+  return String(type).trim();
+}
+
+/**
  * Supabase REST API 공통 fetch 헬퍼
  */
 async function supabaseFetch(path) {
@@ -47,16 +72,18 @@ async function checkIsHoliday(date) {
 
 /**
  * 특정 날짜에 승인된 휴가(leave) 목록을 가져옵니다.
+ * 반환값: { [user_email(lowercase)]: '연차' | '오전반차' | '오후반차' | '공가' ... } (한글 라벨)
+ * - 출장 이관분(biztrip_migrated)은 연차가 아니므로 제외합니다.
  */
 async function getApprovedLeaves(date) {
   try {
-    const data = await supabaseFetch(`/rest/v1/leave?status=eq.approved&start_date=lte.${date}&end_date=gte.${date}&select=user_email,type`);
-    // 이메일을 key로, 타입을 value로 가지는 맵 반환
+    const data = await supabaseFetch(`/rest/v1/leave?status=eq.approved&type=neq.biztrip_migrated&start_date=lte.${date}&end_date=gte.${date}&select=user_email,type`);
+    // 이메일을 key로, 한글 라벨을 value로 가지는 맵 반환
     const leaveMap = {};
     if (data && data.length > 0) {
       data.forEach(item => {
         if (item.user_email) {
-          leaveMap[item.user_email.trim().toLowerCase()] = item.type;
+          leaveMap[item.user_email.trim().toLowerCase()] = formatLeaveType(item.type);
         }
       });
     }
@@ -188,9 +215,10 @@ async function uploadImageToStorage(imageUrl) {
 }
 
 module.exports = {
+  LEAVE_TYPE_LABELS,
+  formatLeaveType,
   checkIsHoliday,
   getApprovedLeaves,
   getApprovedBusinessTrips,
   uploadImageToStorage
 };
-
