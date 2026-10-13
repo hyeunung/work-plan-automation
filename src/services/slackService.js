@@ -201,6 +201,32 @@ function formatDayLabel(dateStr) {
 }
 
 /**
+ * 슬랙 섹션 블록의 글자 제한(3,000자)에 맞춰 텍스트를 줄 단위로 나눕니다. (내용 생략 없음)
+ */
+function splitSectionText(text, limit = 2900) {
+  const chunks = [];
+  let current = '';
+  for (const line of text.split('\n')) {
+    let rest = line;
+    while (rest.length > limit) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+      chunks.push(rest.slice(0, limit));
+      rest = rest.slice(limit);
+    }
+    if (current.length + rest.length + 1 > limit) {
+      chunks.push(current);
+      current = '';
+    }
+    current += (current ? '\n' : '') + rest;
+  }
+  if (current.trim()) chunks.push(current);
+  return chunks.filter(c => c.trim());
+}
+
+/**
  * 일지와 연결된 Task의 프로젝트명을 " · 프로젝트명" 라벨로 반환합니다. (모든 업무를 동일하게 상세 보고하고, 소속만 구분 표시)
  */
 function formatProjectLabel(log, tasksMap) {
@@ -1091,16 +1117,7 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
                   dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
                   formattedDetailLines.push(formattedLine.trim());
 
-                  // 글자수 제한 체크 (3000자 초과 방지)
-                  const appendStr = `  - (상세: ${formattedLine.trim()})\n`;
-                  if (rawItemBody.length + appendStr.length > 2800) {
-                    const limitNotice = `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
-                    if (!rawItemBody.includes(limitNotice)) {
-                      rawItemBody += limitNotice;
-                    }
-                  } else {
-                    rawItemBody += appendStr;
-                  }
+                  rawItemBody += `  - (상세: ${formattedLine.trim()})\n`;
 
                   if (lineImages.length > 0) {
                     for (const img of lineImages) {
@@ -1115,15 +1132,10 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
             if (formattedDetailLines.length > 0) {
               try {
                 const organized = await aiSummarizer.organizeMemberLog(cleanTitle, formattedDetailLines);
-                let organizedBody = organized
+                logItemText += organized
                   .split('\n')
                   .map(l => (l.trim() ? `  ${l.replace(/\s+$/, '')}` : ''))
                   .join('\n') + '\n';
-                if (logItemText.length + organizedBody.length > 2900) {
-                  organizedBody = organizedBody.slice(0, 2900 - logItemText.length)
-                    + `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
-                }
-                logItemText += organizedBody;
                 console.log(`  -> [AI 정리] '${cleanName}' 님 '${cleanTitle}' 일반 보고 구조화 완료`);
               } catch (aiErr) {
                 console.warn(`  -> ⚠️ [AI 정리] 실패, 원문 나열로 폴백 (${cleanTitle}):`, aiErr.message);
@@ -1132,13 +1144,16 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
             }
           }
 
-          memberBlocks.push({
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: logItemText
-            }
-          });
+          // 섹션 블록 글자 제한(3,000자)을 넘으면 생략하지 않고 여러 블록으로 나눠 전부 싣습니다.
+          for (const chunk of splitSectionText(logItemText)) {
+            memberBlocks.push({
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: chunk
+              }
+            });
+          }
 
           // 이미지가 존재하는 경우 본문 바로 밑에 image 블록을 배치
           for (const img of logImages) {
@@ -1170,29 +1185,35 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
 
       dailyArchiveContent += `\n---\n\n`;
 
-      // 담당자당 단 1개의 통합 메시지로 전송!
+      // 담당자당 통합 메시지로 전송 (슬랙 메시지당 블록 50개 제한을 넘으면 이어지는 메시지로 나눠 전송)
       // 한 명의 발송 실패가 전체 보고를 중단시키지 않도록 개별 격리
-      try {
-        await slack.chat.postMessage({
-          channel: channelId,
-          text: `👤 ${cleanName} 님 일일 업무 보고 - (${dayLabel})`,
-          blocks: memberBlocks,
-          unfurl_links: false
-        });
-        console.log(`  -> 🎉 '${cleanName} 님'의 일일 보고 통합 메시지 발송 완료!`);
-      } catch (memberErr) {
-        console.error(`  -> ❌ '${cleanName} 님' 메시지 발송 실패 (${memberErr.message}), 이미지 블록 제거 후 재시도합니다.`);
+      for (let i = 0; i < memberBlocks.length; i += 50) {
+        const batch = memberBlocks.slice(i, i + 50);
+        const fallbackText = `👤 ${cleanName} 님 일일 업무 보고 - (${dayLabel})`;
         try {
-          const blocksWithoutImages = memberBlocks.filter(b => b.type !== 'image');
           await slack.chat.postMessage({
             channel: channelId,
-            text: `👤 ${cleanName} 님 일일 업무 보고 - (${dayLabel})`,
-            blocks: blocksWithoutImages,
+            text: fallbackText,
+            blocks: batch,
             unfurl_links: false
           });
-          console.log(`  -> 🎉 '${cleanName} 님' 재시도(이미지 제외) 발송 완료!`);
-        } catch (retryErr) {
-          console.error(`  -> ❌ '${cleanName} 님' 재시도마저 실패, 다음 담당자로 계속 진행:`, retryErr.message);
+          console.log(`  -> 🎉 '${cleanName} 님'의 일일 보고 통합 메시지 발송 완료!`);
+        } catch (memberErr) {
+          console.error(`  -> ❌ '${cleanName} 님' 메시지 발송 실패 (${memberErr.message}), 이미지 블록 제거 후 재시도합니다.`);
+          try {
+            await slack.chat.postMessage({
+              channel: channelId,
+              text: fallbackText,
+              blocks: batch.filter(b => b.type !== 'image'),
+              unfurl_links: false
+            });
+            console.log(`  -> 🎉 '${cleanName} 님' 재시도(이미지 제외) 발송 완료!`);
+          } catch (retryErr) {
+            console.error(`  -> ❌ '${cleanName} 님' 재시도마저 실패, 다음 담당자로 계속 진행:`, retryErr.message);
+          }
+        }
+        if (i + 50 < memberBlocks.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
       await new Promise(resolve => setTimeout(resolve, 1500)); // 레이트 리밋 방지
