@@ -658,10 +658,8 @@ async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targe
           const uc = updatedCanvases[i];
           const clean = uc.memberName.replace(' 님', '').trim();
 
-          // 실 서비스 배포 시 <!channel> 전체 멘션이 덧붙여집니다.
-          const isLast = i === updatedCanvases.length - 1;
-          const channelMention = isLast ? ' <!channel>' : '';
-          const noticeText = `👤 *[${clean}]* ${weekTitle} 주간 업무 브리핑 캔버스 업데이트 완료 ✅ <${uc.canvasUrl}|바로가기>${channelMention}`;
+          // 채널 전체 멘션(@channel)은 사용하지 않습니다.
+          const noticeText = `👤 *[${clean}]* ${weekTitle} 주간 업무 브리핑 캔버스 업데이트 완료 ✅ <${uc.canvasUrl}|바로가기>`;
 
           await slack.chat.postMessage({
             channel: channelId,
@@ -670,7 +668,7 @@ async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targe
             unfurl_links: false,
             unfurl_media: false
           });
-          console.log(`  -> 🤖 HANSL 봇이 '#${channelName}' 채널에 '${clean}'의 캔버스 바로가기 알림을 전송 완료했습니다. (마지막 멘션 여부: ${isLast})`);
+          console.log(`  -> 🤖 HANSL 봇이 '#${channelName}' 채널에 '${clean}'의 캔버스 바로가기 알림을 전송 완료했습니다.`);
         }
       }
     } else {
