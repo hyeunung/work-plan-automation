@@ -9,18 +9,22 @@ module.exports = {
       tasks: process.env.NOTION_TASKS_DB_ID || '7eec640c-cca4-82a5-aba5-81fe3b052b93',
       teamMembers: process.env.NOTION_TEAM_MEMBERS_DB_ID || '4b7c640c-cca4-82ba-99cc-817c501e7fa4',
       projects: process.env.NOTION_PROJECTS_DB_ID || 'd24c640c-cca4-8278-b12e-81dc5c4e7a51'
-    }
+    },
+    // 보고서 팀원 표시 순서 (대상 인원은 Team Members DB 전원, 여기 없는 인원은 뒤에 가나다순으로 붙음)
+    memberOrder: ['김희승', '김윤회', '최현빈', '정승후']
   },
   slack: {
     token: process.env.SLACK_BOT_TOKEN,
     userToken: process.env.SLACK_USER_TOKEN, // 정현웅 님 유저 권한 토큰
     teamId: process.env.SLACK_TEAM_ID || 'T0B2QAU647J', // 슬랙 팀 ID
-    channelId: process.env.SLACK_CHANNEL_ID || 'C0B78V66EBX', // 기본 스마트팜-workplan ID
+    channelId: process.env.SLACK_CHANNEL_ID || 'C0B78V66EBX', // 기본 hansl-workplan ID
     adminUserId: process.env.SLACK_ADMIN_USER_ID || 'U0B1U11SBE2', // 정현웅 님 슬랙 User ID 백업용
+    // Team Members 인원별 #hansl-workplan 채널 상단 캔버스 ID (신규 인원은 캔버스를 만든 뒤 여기에 추가)
     canvasIds: {
-      '김윤회': process.env.SLACK_CANVAS_ID_YUNHUI || '',
-      '김희승': process.env.SLACK_CANVAS_ID_HEESEUNG || '',
-      '최현빈': process.env.SLACK_CANVAS_ID_HYUNBIN || ''
+      '김윤회': process.env.SLACK_CANVAS_ID_YUNHUI || 'F0B76GZT9D1',
+      '김희승': process.env.SLACK_CANVAS_ID_HEESEUNG || 'F0B514ZTAN8',
+      '최현빈': process.env.SLACK_CANVAS_ID_HYUNBIN || 'F0B4G38UZU7',
+      '정승후': process.env.SLACK_CANVAS_ID_SEUNGHOO || 'F0C8J5DR0G3'
     }
   },
   supabase: {

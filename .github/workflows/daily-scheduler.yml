@@ -10,13 +10,33 @@ on:
         type: choice
         options:
           - daily
+          - daily-backfill
           - daily-reminder
           - weekly
           - weekly-resend
           - weekly-reminder
+          - weekly-late-audit
           - smartfarm-weekly
           - overdue-tasks
           - project-sync
+      start_date:
+        description: '(daily-backfill 전용) 시작일 YYYY-MM-DD'
+        required: false
+        default: ''
+        type: string
+      end_date:
+        description: '(daily-backfill 전용) 종료일 YYYY-MM-DD (비우면 시작일 하루만)'
+        required: false
+        default: ''
+        type: string
+      force:
+        description: '(daily-backfill 전용) true=변동 없어도 전부 삭제 후 재게시 / false=변동 있는 날짜만'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 
 jobs:
@@ -53,9 +73,13 @@ jobs:
           SLACK_CANVAS_ID_YUNHUI: ${{ secrets.SLACK_CANVAS_ID_YUNHUI }}
           SLACK_CANVAS_ID_HEESEUNG: ${{ secrets.SLACK_CANVAS_ID_HEESEUNG }}
           SLACK_CANVAS_ID_HYUNBIN: ${{ secrets.SLACK_CANVAS_ID_HYUNBIN }}
+          SLACK_CANVAS_ID_SEUNGHOO: ${{ secrets.SLACK_CANVAS_ID_SEUNGHOO }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BACKFILL_START_DATE: ${{ github.event.inputs.start_date }}
+          BACKFILL_END_DATE: ${{ github.event.inputs.end_date }}
+          BACKFILL_FORCE: ${{ github.event.inputs.force }}
         run: |
           TYPE="${{ github.event.inputs.pipeline_type }}"
           echo "🚀 [트리거 실행] 선택된 파이프라인: $TYPE"
@@ -65,10 +89,17 @@ jobs:
             node -e "require('./src/app').executeWeeklyPipeline(true)"
           elif [ "$TYPE" = "weekly-reminder" ]; then
             node -e "require('./src/app').executeWeeklyReminderPipeline()"
+          elif [ "$TYPE" = "weekly-late-audit" ]; then
+            node -e "require('./src/app').executeWeeklyLateLogAuditPipeline().catch(e => { console.error(e); process.exit(1); })"
           elif [ "$TYPE" = "smartfarm-weekly" ]; then
             node -e "require('./src/app').executeSmartfarmWeeklyPipeline().catch(e => { console.error(e); process.exit(1); })"
           elif [ "$TYPE" = "daily-reminder" ]; then
             node -e "require('./src/app').executeDailyReminderPipeline()"
+          elif [ "$TYPE" = "daily-backfill" ]; then
+            if [ -z "$BACKFILL_START_DATE" ]; then
+              echo "❌ daily-backfill 에는 start_date 입력이 필요합니다."; exit 1
+            fi
+            node -e "require('./src/app').executeDailyBackfillPipeline(process.env.BACKFILL_START_DATE, process.env.BACKFILL_END_DATE || process.env.BACKFILL_START_DATE, process.env.BACKFILL_FORCE !== 'false').catch(e => { console.error(e); process.exit(1); })"
           elif [ "$TYPE" = "overdue-tasks" ]; then
             node -e "require('./src/app').executeOverdueTasksReminderPipeline()"
           elif [ "$TYPE" = "project-sync" ]; then

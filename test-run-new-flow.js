@@ -16,7 +16,7 @@ async function main() {
   console.log(`일일업무보고 채널 ID: ${dailyChannelId}`);
   console.log(`주간업무보고 채널 ID: ${weeklyChannelId}`);
 
-  // 2. 스마트팜 관련 출장 데이터 판별 테스트 (5월 28일 기준 테스트)
+  // 2. 출장 데이터 조회 테스트 (5월 28일 기준 테스트)
   const date = '2026-05-28';
   console.log(`\n--- ${date} 출장 정보 조회 ---`);
   const trips = await supabaseService.getApprovedBusinessTrips(date);
@@ -24,23 +24,12 @@ async function main() {
 
   // 3. 일일보고 테스트 발송
   console.log('\n--- 일일업무보고 발송 시뮬레이션 ---');
-  const dummyMemberReports = [
-    {
-      memberName: '김윤회',
-      dailyLogs: [],
-      tasksMap: {}
-    },
-    {
-      memberName: '김희승',
-      dailyLogs: [],
-      tasksMap: {}
-    },
-    {
-      memberName: '최현빈',
-      dailyLogs: [],
-      tasksMap: {}
-    }
-  ];
+  const members = await notionService.getTeamMemberNames();
+  const dummyMemberReports = members.map(memberName => ({
+    memberName,
+    dailyLogs: [],
+    tasksMap: {}
+  }));
 
   const dailyResult = await slackService.sendDailyReport({
     date: date,
@@ -51,29 +40,13 @@ async function main() {
 
   // 4. 주간보고 테스트 발송 (실제 캔버스가 갱신되므로 알림 메시지만 테스트하거나 skipChannelNotice=false 로 테스트)
   console.log('\n--- 주간업무보고 발송 시뮬레이션 ---');
-  const dummyWeeklyMemberReports = [
-    {
-      memberName: '김윤회',
-      analysisResults: [],
-      dailyLogs: [],
-      nextWeekPlan: [],
-      tasksMap: {}
-    },
-    {
-      memberName: '김희승',
-      analysisResults: [],
-      dailyLogs: [],
-      nextWeekPlan: [],
-      tasksMap: {}
-    },
-    {
-      memberName: '최현빈',
-      analysisResults: [],
-      dailyLogs: [],
-      nextWeekPlan: [],
-      tasksMap: {}
-    }
-  ];
+  const dummyWeeklyMemberReports = members.map(memberName => ({
+    memberName,
+    analysisResults: [],
+    dailyLogs: [],
+    nextWeekPlan: [],
+    tasksMap: {}
+  }));
 
   const weeklyResult = await slackService.sendWeeklyReport({
     weekTitle: '5월 4주차',

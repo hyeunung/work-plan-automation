@@ -96,52 +96,39 @@ async function getApprovedLeaves(date) {
 
 /**
  * 특정 날짜에 승인된 출장(business_trips) 목록을 가져옵니다.
- * 반환값: 출장자 이름(신청자 및 동반 출장자)들의 Set
+ * 반환값: Map<출장자 이름(신청자 및 동반 출장자), { destination, purpose }>
+ * - 출장도 한슬 업무이므로 출장 종류와 관계없이 일지 작성 대상입니다. (상태 라벨 표시용)
  */
 async function getApprovedBusinessTrips(date) {
   try {
-    const data = await supabaseFetch(`/rest/v1/business_trips?approval_status=eq.approved&trip_start_date=lte.${date}&trip_end_date=gte.${date}&select=requester_name,travelers,companions,project_name,trip_purpose,trip_destination`);
-    
+    const data = await supabaseFetch(`/rest/v1/business_trips?approval_status=eq.approved&trip_start_date=lte.${date}&trip_end_date=gte.${date}&select=requester_name,travelers,companions,trip_purpose,trip_destination`);
+
     const tripMap = new Map();
-    if (data && data.length > 0) {
-      const smartFarmKeywords = ['스마트팜', '청송', '농장', '온실', '대차', '방제', '원격제어', '원격 제어', '주행', '생육', '제어', '센서', '하이브리드'];
-      
-      data.forEach(item => {
-        const proj = item.project_name || '';
-        const purp = item.trip_purpose || '';
-        const dest = item.trip_destination || '';
-        
-        const isSmartFarm = smartFarmKeywords.some(kw => 
-          proj.includes(kw) || purp.includes(kw) || dest.includes(kw)
-        );
-        
-        const travelersList = new Set();
-        if (item.requester_name) {
-          travelersList.add(item.requester_name.trim());
-        }
-        
-        if (Array.isArray(item.travelers)) {
-          item.travelers.forEach(name => {
-            if (name) travelersList.add(name.trim());
-          });
-        }
-        
-        if (Array.isArray(item.companions)) {
-          item.companions.forEach(comp => {
-            if (comp && comp.name) {
-              travelersList.add(comp.name.trim());
-            }
-          });
-        }
-        
-        travelersList.forEach(name => {
-          const existing = tripMap.get(name);
-          tripMap.set(name, {
-            isSmartFarm: existing ? (existing.isSmartFarm || isSmartFarm) : isSmartFarm
-          });
+    (data || []).forEach(item => {
+      const travelersList = new Set();
+      if (item.requester_name) {
+        travelersList.add(item.requester_name.trim());
+      }
+      if (Array.isArray(item.travelers)) {
+        item.travelers.forEach(name => {
+          if (name) travelersList.add(name.trim());
         });
+      }
+      if (Array.isArray(item.companions)) {
+        item.companions.forEach(comp => {
+          if (comp && comp.name) travelersList.add(comp.name.trim());
+        });
+      }
+
+      travelersList.forEach(name => {
+        if (!tripMap.has(name)) {
+          tripMap.set(name, {
+            destination: (item.trip_destination || '').trim(),
+            purpose: (item.trip_purpose || '').trim()
+          });
+        }
       });
-    }
+    });
     return tripMap;
   } catch (error) {
     console.error(`[Supabase] 출장 승인 목록 조회 실패 (${date}):`, error.message);

@@ -7,7 +7,7 @@ require('dotenv').config();
 async function run() {
   console.log('🚀 [수동 즉각 테스트 실행] Notion & Slack 주간 업무보고 및 자동 ✅ 마킹 시스템 가동\n');
 
-  const members = ['김윤회', '김희승', '최현빈'];
+  const members = await notionService.getTeamMemberNames(); // Team Members DB 전원
   
   const lastWeekMonday = '2026-05-26'; // 노션에 실제 5월 26일로 기입되어 있음
   const nextWeekMonday = '2026-06-01';
@@ -112,10 +112,10 @@ async function run() {
     }
   }
 
-  // 7. 채널 최종 취합 보고 발송 (#스마트팜-workplan)
+  // 7. 채널 최종 취합 보고 발송 (#hansl-workplan)
   if (memberReports.length > 0) {
     console.log(`\n==================================================`);
-    console.log(`🚀 [Step 7] '#스마트팜-workplan' 채널로 최종 주간보고 표 취합 메시지 발송 중...`);
+    console.log(`🚀 [Step 7] '#hansl-workplan' 채널로 최종 주간보고 표 취합 메시지 발송 중...`);
     console.log(`==================================================`);
 
     try {
@@ -123,7 +123,7 @@ async function run() {
         weekTitle: '5월 4주차',
         nextWeekTitle: '6월 1주차',
         memberReports,
-        targetChannelName: '스마트팜-workplan',
+        targetChannelName: 'hansl-workplan',
         startDate,
         endDate,
         skipChannelNotice: true

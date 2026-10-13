@@ -21,6 +21,65 @@ function formatNotionPageUrl(title, id) {
 }
 
 /**
+ * Team Members DB의 전체 인원을 조회합니다. (보고·독려 대상 = Team Members 전원)
+ * 반환: [{ id, name, position }] (config.notion.memberOrder 순서, 그 외 인원은 가나다순으로 뒤에)
+ */
+let teamMembersCache = null;
+
+async function getTeamMembers() {
+  if (teamMembersCache) return teamMembersCache;
+  const members = [];
+  let startCursor;
+  do {
+    const response = await notion.databases.query({
+      database_id: config.notion.db.teamMembers,
+      start_cursor: startCursor
+    });
+    for (const page of response.results) {
+      const name = page.properties['이름']?.title?.map(t => t.plain_text).join('').trim();
+      if (!name) continue;
+      members.push({
+        id: page.id,
+        name,
+        position: page.properties['직급']?.select?.name || ''
+      });
+    }
+    startCursor = response.has_more ? response.next_cursor : undefined;
+  } while (startCursor);
+
+  const order = config.notion.memberOrder || [];
+  const rank = name => (order.includes(name) ? order.indexOf(name) : order.length);
+  members.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name, 'ko'));
+  teamMembersCache = members;
+  return members;
+}
+
+async function getTeamMemberNames() {
+  const members = await getTeamMembers();
+  return members.map(m => m.name);
+}
+
+async function findTeamMember(memberName) {
+  const members = await getTeamMembers();
+  const cleanName = memberName.replace(' 님', '').trim();
+  return members.find(m => m.name === cleanName) || null;
+}
+
+const notionUserNameCache = {};
+
+async function getNotionUserName(userId) {
+  if (userId in notionUserNameCache) return notionUserNameCache[userId];
+  try {
+    const user = await notion.users.retrieve({ user_id: userId });
+    notionUserNameCache[userId] = user.name || '';
+  } catch (error) {
+    console.warn(`노션 사용자(${userId}) 조회 실패:`, error.message);
+    notionUserNameCache[userId] = '';
+  }
+  return notionUserNameCache[userId];
+}
+
+/**
  * 특정 월요일 시작 날짜 및 담당자에 대한 Weekly Plan 페이지를 가져옵니다.
  * @param {string} weekMondayDate YYYY-MM-DD 형식의 월요일 날짜
  * @param {string} memberName 담당자 이름
@@ -42,70 +101,32 @@ async function getWeeklyPlanPage(weekMondayDate, memberName) {
       return null;
     }
 
-    // 2. 만약 작성자 프로퍼티가 정상 기입되어 있다면 (Relation 또는 People 타입 호환 매칭)
+    // 2. 작성자 프로퍼티(Relation 또는 People)로 담당자 페이지 매칭
+    const member = await findTeamMember(memberName);
     for (const page of weeklyResponse.results) {
       const creatorProp = page.properties['작성자'] || page.properties['VRQP'];
-      if (creatorProp) {
-        if (creatorProp.type === 'people' && creatorProp.people && creatorProp.people.length > 0) {
-          const matched = creatorProp.people.some(person => person.name && person.name.trim() === memberName.trim());
-          if (matched) return page;
-        } else if (creatorProp.type === 'relation' && creatorProp.relation && creatorProp.relation.length > 0) {
-          const memberResponse = await notion.databases.query({
-            database_id: config.notion.db.teamMembers,
-            filter: { property: '이름', title: { equals: memberName } }
-          });
-          if (memberResponse.results.length > 0) {
-            const memberPageId = memberResponse.results[0].id;
-            const matched = creatorProp.relation.some(rel => rel.id === memberPageId);
-            if (matched) return page;
-          }
-        }
+      if (!creatorProp) continue;
+      if (creatorProp.type === 'people' && creatorProp.people?.length > 0) {
+        if (creatorProp.people.some(person => person.name && person.name.trim() === memberName.trim())) return page;
+      } else if (creatorProp.type === 'relation' && creatorProp.relation?.length > 0 && member) {
+        if (creatorProp.relation.some(rel => rel.id === member.id)) return page;
       }
     }
 
-    // 3. [초강력 자율 지능 매칭] 작성자 정보가 노션 상에서 완전히 깨져서 소실된 경우 (빈 배열인 경우)
-    // 각 담당자가 전담하는 독창적 업무 키워드를 기반으로 진짜 본문 소유자를 100% 자율 유추 감지!
-    const memberKeywords = {
-      '김윤회': ['센서', '차트', '모달', '스펙', '기기', '카테고리', '필드'],
-      '김희승': ['무인대차', '경로', '대차', '지도', '제어', '통신', 'ack'],
-      '최현빈': ['날씨', '기상청', 'dto', '간소화', '목업', 'mock', 'redis', '캐싱', 'emitter']
-    };
-
-    const keywords = memberKeywords[memberName] || [];
-    let bestPage = null;
-    let maxMatches = -1;
-
+    // 3. 작성자 프로퍼티가 비어 있는 경우: 노션 페이지 생성자(created_by) 이름으로 매칭
     for (const page of weeklyResponse.results) {
-      const richText = page.properties['할 일']?.rich_text || [];
-      const contentText = richText.map(t => t.plain_text).join('').toLowerCase();
-      
-      let matchCount = 0;
-      keywords.forEach(kw => {
-        if (contentText.includes(kw.toLowerCase())) {
-          matchCount++;
-        }
-      });
-
-      if (matchCount > maxMatches && matchCount > 0) {
-        maxMatches = matchCount;
-        bestPage = page;
+      const creatorProp = page.properties['작성자'] || page.properties['VRQP'];
+      const hasCreator = creatorProp && (creatorProp.people?.length > 0 || creatorProp.relation?.length > 0);
+      if (hasCreator || !page.created_by?.id) continue;
+      const creatorName = await getNotionUserName(page.created_by.id);
+      if (creatorName && creatorName.trim() === memberName.trim()) {
+        console.log(`  -> [생성자 매칭] '${memberName}' 님의 작성자 정보가 비어 있어 페이지 생성자 기준으로 매칭했습니다.`);
+        return page;
       }
     }
 
-    if (bestPage) {
-      console.log(`  -> [자율 지능 매칭] '${memberName}' 님의 작성자 정보 소실 자동 극복! 본문 키워드 분석 결과 이 페이지를 소유자로 매칭합니다.`);
-      return bestPage;
-    }
-
-    // 4. [백업 안전 정비] 키워드가 겹치거나 없을 시, 3명에게 3개 검색 페이지를 고유 ID 순서대로 대칭 강제 분배!
-    const sortedResults = weeklyResponse.results.sort((a, b) => a.id.localeCompare(b.id));
-    const memberIndex = ['김윤회', '김희승', '최현빈'].indexOf(memberName);
-    if (memberIndex !== -1 && sortedResults[memberIndex]) {
-      console.log(`  -> [백업 대칭 매칭] '${memberName}' 님을 고유 ID 정렬순번 인덱스 ${memberIndex} 번 페이지와 매핑 완료.`);
-      return sortedResults[memberIndex];
-    }
-
-    return weeklyResponse.results[0];
+    // 다른 사람의 계획을 잘못 매칭하지 않도록, 확실한 근거가 없으면 미작성으로 처리
+    return null;
   } catch (error) {
     console.error('getWeeklyPlanPage 에러:', error);
     throw error;
@@ -118,20 +139,11 @@ async function getWeeklyPlanPage(weekMondayDate, memberName) {
 async function getDailyWorkLogs(startDate, endDate, memberName) {
   try {
     // 1. Team Members DB에서 memberName 페이지 ID 조회
-    const memberResponse = await notion.databases.query({
-      database_id: config.notion.db.teamMembers,
-      filter: {
-        property: '이름',
-        title: {
-          equals: memberName
-        }
-      }
-    });
-
-    if (memberResponse.results.length === 0) {
+    const member = await findTeamMember(memberName);
+    if (!member) {
       throw new Error(`담당자 '${memberName}'를 찾을 수 없습니다.`);
     }
-    const memberPageId = memberResponse.results[0].id;
+    const memberPageId = member.id;
 
     // 2. Daily Work Log DB에서 기간 및 담당자 필터링하여 조회
     const logResponse = await notion.databases.query({
@@ -172,6 +184,8 @@ async function getDailyWorkLogs(startDate, endDate, memberName) {
       const date = page.properties['업무일']?.date?.start || '';
       const taskRelations = page.properties['관련 Task']?.relation || [];
       const pageId = page.id;
+      // 노션 페이지 생성 일시 (사후 작성/지연 작성 판별용, ISO 문자열)
+      const createdTime = page.created_time || page.properties['생성 일시']?.created_time || '';
 
       const details = await getPageContentDetails(pageId);
 
@@ -179,6 +193,7 @@ async function getDailyWorkLogs(startDate, endDate, memberName) {
         pageId,
         title,
         date,
+        createdTime,
         taskRelations,
         details,
         url: formatNotionPageUrl(title, pageId)
@@ -354,13 +369,9 @@ async function syncProjectStatuses() {
   const updatedProjects = [];
   try {
     // 1. 담당자 실명 매핑을 위한 Team Members 정보 조회
-    const memberResponse = await notion.databases.query({
-      database_id: config.notion.db.teamMembers
-    });
     const memberMap = {};
-    for (const member of memberResponse.results) {
-      const memberName = member.properties['이름']?.title?.[0]?.plain_text || '이름 없음';
-      memberMap[member.id] = memberName;
+    for (const member of await getTeamMembers()) {
+      memberMap[member.id] = member.name;
     }
 
     // 2. 프로젝트 목록 조회
@@ -433,14 +444,9 @@ async function getOverdueTasksByMember() {
     const todayStr = new Date(todayKst.getTime() + kstOffset).toISOString().split('T')[0];
 
     // 1. 멤버 정보 및 직급 매핑 테이블 빌드
-    const memberResponse = await notion.databases.query({
-      database_id: config.notion.db.teamMembers
-    });
     const memberMap = {};
-    for (const member of memberResponse.results) {
-      const name = member.properties['이름']?.title?.[0]?.plain_text || '이름 없음';
-      const position = member.properties['직급']?.select?.name || '연구원';
-      memberMap[member.id] = { name, position };
+    for (const member of await getTeamMembers()) {
+      memberMap[member.id] = { name: member.name, position: member.position || '연구원' };
     }
 
     // 2. Tasks DB에서 완료되지 않은 모든 태스크 조회 (페이지네이션 처리)
@@ -527,6 +533,9 @@ async function getOverdueTasksByMember() {
 }
 
 module.exports = {
+  getTeamMembers,
+  getTeamMemberNames,
+  findTeamMember,
   getWeeklyPlanPage,
   getDailyWorkLogs,
   getTasksMap,

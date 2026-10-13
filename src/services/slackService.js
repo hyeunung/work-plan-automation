@@ -7,16 +7,89 @@ const aiSummarizer = require('./aiSummarizer');
 
 const slack = new WebClient(config.slack.token);
 
-const MEMBER_EMAILS = {
-  '김윤회': 'yoon-whoi.kim@hansl.com',
-  '김희승': 'hee-seung.kim@hansl.com',
-  '최현빈': 'hyun-bin.choi@hansl.com'
-};
-
 const userIdCache = {};
 
 /**
- * 채널명(예: '스마트팜-workplan')을 받아 해당하는 실시간 슬랙 채널 ID를 조회합니다.
+ * Team Members 이름 -> 슬랙 사용자 매핑 (슬랙 실명/표시 이름 기준, 실행당 1회 조회 후 캐싱)
+ * Team Members DB에 새 인원이 추가되면 코드 수정 없이 자동으로 매핑됩니다.
+ */
+let slackDirectoryCache = null;
+
+async function getSlackDirectory() {
+  if (slackDirectoryCache) return slackDirectoryCache;
+  const directory = {};
+  let cursor;
+  do {
+    const response = await slack.users.list({ limit: 200, cursor });
+    for (const user of response.members || []) {
+      if (user.deleted || user.is_bot || !user.profile?.email) continue;
+      const entry = { id: user.id, email: user.profile.email.trim().toLowerCase() };
+      [user.real_name, user.profile.real_name, user.profile.display_name]
+        .filter(Boolean)
+        .map(n => n.trim())
+        .forEach(n => { if (!directory[n]) directory[n] = entry; });
+    }
+    cursor = response.response_metadata?.next_cursor;
+  } while (cursor);
+  slackDirectoryCache = directory;
+  return directory;
+}
+
+/**
+ * 담당자 이름으로 슬랙 이메일을 조회합니다. (휴가 조회·DM 발송용)
+ */
+async function getMemberEmail(memberName) {
+  const cleanName = memberName.replace(' 님', '').trim();
+  try {
+    const directory = await getSlackDirectory();
+    const entry = directory[cleanName];
+    if (entry) {
+      userIdCache[entry.email] = entry.id;
+      return entry.email;
+    }
+    console.warn(`[Slack] '${cleanName}' 님과 이름이 일치하는 슬랙 사용자를 찾지 못했습니다.`);
+  } catch (error) {
+    console.error(`[Slack] 사용자 목록 조회 실패 (${cleanName}):`, error.message);
+  }
+  return null;
+}
+
+/**
+ * 담당자의 당일 근태 상태(휴가/출장)를 판정해 보고서 라벨을 만듭니다.
+ * 출장도 한슬 업무이므로 일지 작성 대상이며, 라벨만 표시합니다.
+ */
+async function getMemberStatus(rep, approvedLeaves, approvedTrips) {
+  const cleanName = rep.memberName.replace(' 님', '').trim();
+  const memberEmail = await getMemberEmail(cleanName);
+  const leaveType = memberEmail ? approvedLeaves[memberEmail] : null;
+  const isTrip = approvedTrips.has(cleanName);
+
+  let statusLabel = '';
+  if (leaveType) {
+    statusLabel = ` - ${leaveType}`;
+  } else if (isTrip) {
+    statusLabel = ' - 출장';
+  } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
+    const titles = rep.dailyLogs.map(log => log.title || '');
+    if (titles.some(t => t.includes('연차') && !t.includes('반차'))) statusLabel = ' - 연차';
+    else if (titles.some(t => t.includes('오전반차') || t.includes('오전 반차'))) statusLabel = ' - 오전반차';
+    else if (titles.some(t => t.includes('오후반차') || t.includes('오후 반차'))) statusLabel = ' - 오후반차';
+    else if (titles.some(t => t.includes('반차'))) statusLabel = ' - 반차';
+    else if (titles.some(t => t.includes('출장'))) statusLabel = ' - 출장';
+  }
+
+  let emptyText = '* _오늘 기록된 일일 업무 일지가 없습니다._';
+  if (leaveType) {
+    emptyText = `* _금일 ${leaveType}입니다._`;
+  } else if (isTrip) {
+    emptyText = '* _금일 출장 중이며, 기록된 일일 업무 일지가 없습니다._';
+  }
+
+  return { cleanName, statusLabel, emptyText };
+}
+
+/**
+ * 채널명(예: 'hansl-workplan')을 받아 해당하는 실시간 슬랙 채널 ID를 조회합니다.
  * strict가 true면 채널을 찾지 못했을 때 기본 채널로 폴백하지 않고 null을 반환합니다.
  * (비공개 채널은 봇이 멤버가 아니면 목록에 노출되지 않으므로, 폴백 시 엉뚱한 채널로 발송되는 사고 방지용)
  */
@@ -128,25 +201,15 @@ function formatDayLabel(dateStr) {
 }
 
 /**
- * 텍스트 패딩 계산 함수 (한글 문자 너비 보정 포함)
+ * 일지와 연결된 Task의 프로젝트명을 " · 프로젝트명" 라벨로 반환합니다. (모든 업무를 동일하게 상세 보고하고, 소속만 구분 표시)
  */
-function getVisualWidth(str) {
-  let width = 0;
-  for (let i = 0; i < str.length; i++) {
-    const code = str.charCodeAt(i);
-    if (code >= 0xac00 && code <= 0xd7a3 || code >= 0x3000 && code <= 0x303f || code >= 0xff00 && code <= 0xffef) {
-      width += 2;
-    } else {
-      width += 1;
-    }
-  }
-  return width;
-}
-
-function padRight(str, targetWidth) {
-  const currentWidth = getVisualWidth(str);
-  if (currentWidth >= targetWidth) return str;
-  return str + ' '.repeat(targetWidth - currentWidth);
+function formatProjectLabel(log, tasksMap) {
+  const projectNames = [...new Set(
+    (log.taskRelations || [])
+      .map(rel => tasksMap && tasksMap[rel.id]?.projectName)
+      .filter(Boolean)
+  )];
+  return projectNames.length > 0 ? ` · ${projectNames.join(', ')}` : '';
 }
 
 /**
@@ -190,32 +253,16 @@ function buildCanvasMarkdownContent({ weekTitle, nextWeekTitle, memberName, anal
       markdownContent += `### ■ ${formattedDate}\n`;
 
       logsByDate[date].forEach(log => {
-        // 일지와 연결된 Task 중 하나라도 "스마트팜 외 업무" 에 속하는지 실시간 판별
-        const isOutsideWork = log.taskRelations.some(rel => {
-          const taskInfo = tasksMap && tasksMap[rel.id];
-          return taskInfo && taskInfo.projectName === '스마트팜 외 업무';
-        });
+        const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
+        markdownContent += `* **[${cleanTitle}](${log.url})**${formatProjectLabel(log, tasksMap)}\n`;
 
-        if (isOutsideWork) {
-          // 스마트팜 외 업무는 구체적 기술 없이 축약 출력 (연동된 실제 태스크명 기재) 및 상세 생략
-          const taskNames = log.taskRelations
-            .map(rel => tasksMap[rel.id]?.name)
-            .filter(Boolean);
-          const taskNameStr = taskNames.length > 0 ? taskNames.join(', ') : '스마트팜 외 업무';
-          markdownContent += `* **[${taskNameStr} (스마트팜 외 업무)](${log.url})**\n`;
-        } else {
-          // 일반 스마트팜 업무는 기존처럼 아주 상세하게 출력
-          const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
-          markdownContent += `* **[${cleanTitle}](${log.url})**\n`;
-          
-          if (log.details && log.details.trim()) {
-            const detailLines = log.details.trim().split('\n');
-            detailLines.forEach(line => {
-              if (line.trim()) {
-                markdownContent += `  * (상세: ${line.trim()})\n`;
-              }
-            });
-          }
+        if (log.details && log.details.trim()) {
+          const detailLines = log.details.trim().split('\n');
+          detailLines.forEach(line => {
+            if (line.trim()) {
+              markdownContent += `  * (상세: ${line.trim()})\n`;
+            }
+          });
         }
       });
       markdownContent += `\n`;
@@ -226,8 +273,12 @@ function buildCanvasMarkdownContent({ weekTitle, nextWeekTitle, memberName, anal
 
   // Part 2. 계획 대비 완료/미완료 대조 (슬랙 캔버스 전용 리치 마크다운 표)
   markdownContent += `## 📝 2. 계획 대비 완료/미완료 대조 (${weekTitle} 대조 표)\n\n`;
-  markdownContent += `| ${weekTitle} 계획 | 완료여부 | ${weekTitle} Daily Work Log |\n`;
-  markdownContent += `| :--- | :---: | :--- |\n`;
+  if (analysisResults.length === 0) {
+    markdownContent += `*${weekTitle}에 등록된 주간 계획이 없습니다.*\n\n`;
+  } else {
+    markdownContent += `| ${weekTitle} 계획 | 완료여부 | ${weekTitle} Daily Work Log |\n`;
+    markdownContent += `| :--- | :---: | :--- |\n`;
+  }
 
   analysisResults.forEach(task => {
     const cleanTaskName = task.taskName.replace(/[📄@]/g, '').trim();
@@ -300,7 +351,7 @@ function buildCanvasMarkdownContent({ weekTitle, nextWeekTitle, memberName, anal
         activeProjectName = cleanTaskName;
         markdownContent += `### 📁 Project: ${taskLink}\n`;
         
-        // 만약 상위 프로젝트 본문 자체에 하위 불릿(예: 스마트팜 외 업무 아래의 텍스트들)이 달려있다면 렌더링
+        // 상위 프로젝트 본문 자체에 하위 불릿이 달려있다면 렌더링
         if (task.subItems && task.subItems.length > 0) {
           task.subItems.forEach(sub => {
             const cleanSubName = sub.itemName.replace(/[📄@]/g, '').trim();
@@ -468,151 +519,6 @@ async function updateWeeklyReportCanvas({ canvasId, weekTitle, nextWeekTitle, me
   }
 }
 
-/**
- * 개별 직원의 주간업무 리포트 본문을 고가독성 3열 박스 격자 표 텍스트로 가공합니다 (일반 메시지용).
- */
-async function buildEmployeeReportText({ weekTitle, nextWeekTitle, memberName, analysisResults, dailyLogs, nextWeekPlan, tasksMap, startDate, endDate }) {
-  const cleanMemberName = memberName.replace(' 님', '');
-  let text = `*👤 [담당자: ${cleanMemberName} 님 주간 업무 브리핑]*\n`;
-  text += `──────────────────────────────────────\n\n`;
-
-  let periodLabel = '';
-  if (startDate && endDate) {
-    const startObj = new Date(startDate);
-    const endObj = new Date(endDate);
-    const startM = startObj.getUTCMonth() + 1;
-    const startD = startObj.getUTCDate();
-    const endM = endObj.getUTCMonth() + 1;
-    const endD = endObj.getUTCDate();
-    periodLabel = ` (${startM}/${startD}~${endM}/${endD})`;
-  }
-  text += `*📂 1. 지난주 실제 업무 보고 (Daily Work Log)${periodLabel}*\n`;
-  const logsByDate = {};
-  dailyLogs.forEach(log => {
-    if (!logsByDate[log.date]) logsByDate[log.date] = [];
-    logsByDate[log.date].push(log);
-  });
-
-  const sortedDates = Object.keys(logsByDate).sort();
-
-  if (sortedDates.length === 0) {
-    text += `  _(지난주 기록된 Daily Work Log가 없습니다.)_\n\n`;
-  } else {
-    for (const date of sortedDates) {
-      const formattedDate = formatDayLabel(date);
-      text += `  *■ ${formattedDate}*\n`;
-      for (const log of logsByDate[date]) {
-        // 일지와 연결된 Task 중 하나라도 "스마트팜 외 업무" 에 속하는지 실시간 판별
-        const isOutsideWork = log.taskRelations.some(rel => {
-          const taskInfo = tasksMap && tasksMap[rel.id];
-          return taskInfo && taskInfo.projectName === '스마트팜 외 업무';
-        });
-
-        if (isOutsideWork) {
-          const taskNames = log.taskRelations
-            .map(rel => tasksMap[rel.id]?.name)
-            .filter(Boolean);
-          const taskNameStr = taskNames.length > 0 ? taskNames.join(', ') : '스마트팜 외 업무';
-          text += `    • <${log.url}|${taskNameStr} (스마트팜 외 업무)>\n`;
-        } else {
-          const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
-          text += `    • <${log.url}|${cleanTitle}>\n`;
-          
-          if (log.details && log.details.trim()) {
-            const detailLines = log.details.trim().split('\n');
-            for (const line of detailLines) {
-              if (line.trim()) {
-                const formattedLine = await formatLinksInText(line.trim());
-                const cleanLineText = formattedLine.replace(/[•\-\*\s\(\)]/g, '').trim();
-                if (cleanLineText.length > 0) {
-                  text += `      └ (상세: ${formattedLine.trim()})\n`;
-                }
-              }
-            }
-          }
-        }
-      }
-      text += '\n';
-    }
-  }
-
-  text += `*📝 2. 계획 대비 완료/미완료 대조 (5월 4주차 대조 표)*\n`;
-  text += `\`\`\`\n`;
-
-  const col1Width = 34;
-  const col2Width = 10;
-  const col3Width = 46;
-
-  text += `┌${'─'.repeat(col1Width/2)}┬${'─'.repeat(col2Width/2)}┬${'─'.repeat(col3Width/2)}┐\n`;
-  text += `│${padRight(' 지난주 계획', col1Width)}│${padRight(' 완료여부', col2Width)}│${padRight(' 지난주 Daily Work Log', col3Width)}│\n`;
-  text += `├${'─'.repeat(col1Width/2)}┼${'─'.repeat(col2Width/2)}┼${'─'.repeat(col3Width/2)}┤\n`;
-
-  analysisResults.forEach(task => {
-    const cleanTaskName = task.taskName.replace(/[📄@]/g, '').trim();
-    const taskCol1 = cleanTaskName.length > 15 ? cleanTaskName.substring(0, 14) + '...' : cleanTaskName;
-    const taskCol2 = '    -     ';
-    const taskCol3 = taskCol1;
-
-    text += `│${padRight(taskCol1, col1Width)}│${padRight(taskCol2, col2Width)}│${padRight(taskCol3, col3Width)}│\n`;
-
-    task.subItems.forEach(sub => {
-      const cleanItemName = sub.itemName.replace(/[📄@]/g, '').trim();
-      const col1Val = `  └ • ${cleanItemName}`;
-      const col2Val = sub.isCompleted ? '    ✅    ' : '          ';
-
-      let col3Val = '';
-      if (sub.isCompleted && sub.matchingLog) {
-        const logDate = sub.matchingLog.date;
-        const dateObj = new Date(logDate);
-        const formattedDate = `${dateObj.getUTCMonth() + 1}/${dateObj.getUTCDate()}`;
-        const cleanLogTitle = sub.matchingLog.title.replace(/[📄@]/g, '').trim();
-        col3Val = `  └ • (${formattedDate}) ${cleanLogTitle}`;
-      } else if (sub.isCompleted && sub.isAlreadyChecked) {
-        col3Val = `  └ • (완료됨) ${cleanItemName}`;
-      } else {
-        col3Val = `  └ • (매칭 일지 없음 ➔ 이관)`;
-      }
-
-      const col1Trimmed = col1Val.length > 20 ? col1Val.substring(0, 19) + '...' : col1Val;
-      const col3Trimmed = col3Val.length > 30 ? col3Val.substring(0, 29) + '...' : col3Val;
-
-      text += `│${padRight(col1Trimmed, col1Width)}│${padRight(col2Val, col2Width)}│${padRight(col3Trimmed, col3Width)}│\n`;
-    });
-
-    text += `├${'─'.repeat(col1Width/2)}┼${'─'.repeat(col2Width/2)}┼${'─'.repeat(col3Width/2)}┤\n`;
-  });
-
-  text = text.trim().replace(/├───────.+┤$/, `└${'─'.repeat(col1Width/2)}┴${'─'.repeat(col2Width/2)}┴${'─'.repeat(col3Width/2)}┘`) + '\n';
-  text += `\`\`\`\n\n`;
-
-  text += `*🚀 3. 이번 주 업무 계획 (${nextWeekTitle} 계획)*\n`;
-  if (!nextWeekPlan || nextWeekPlan.length === 0) {
-    text += `  _(이번 주 등록된 계획이 없습니다.)_\n`;
-  } else {
-    nextWeekPlan.forEach(task => {
-      const cleanTaskName = task.taskName.replace(/[📄@]/g, '').trim();
-      const taskLink = task.taskUrl ? `<${task.taskUrl}|${cleanTaskName}>` : cleanTaskName;
-      text += `  *🔗 Task: ${taskLink}*\n`;
-
-      task.subItems.forEach(sub => {
-        const cleanSubName = sub.itemName.replace(/[📄@]/g, '').trim();
-        const wasIncompleteLastWeek = analysisResults.some(lastTask => 
-          lastTask.subItems.some(lastSub => !lastSub.isCompleted && lastSub.itemName === sub.itemName)
-        );
-
-        if (wasIncompleteLastWeek) {
-          text += `    • ${cleanSubName} _(★ 지난주 미완료 이관 보완)_\n`;
-        } else {
-          text += `    • ${cleanSubName}\n`;
-        }
-      });
-    });
-  }
-
-  text += `\n\n`;
-  return text;
-}
-
 async function cleanUpWeeklyReportMessages({ channelId, weekTitle }) {
   try {
     console.log(`  -> [Slack 청소] '${weekTitle}' 주간 보고 완료 알림 청소 시작...`);
@@ -659,7 +565,7 @@ async function cleanUpWeeklyReportMessages({ channelId, weekTitle }) {
  * 모든 직원의 주간 업무 리포트를 취합하여 지정 채널에 100% 무결점 텍스트 리포트 표로 발송합니다.
  * 또한 수동 캔버스 ID 목록이 설정된 경우, 각 캔버스를 실시간 덮어쓰기(수정) 갱신해 줍니다!
  */
-async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targetChannelName = '스마트팜-workplan', startDate, endDate, skipChannelNotice = false }) {
+async function sendWeeklyReport({ weekTitle, nextWeekTitle, memberReports, targetChannelName = 'hansl-workplan', startDate, endDate, skipChannelNotice = false }) {
   try {
     // 1. [초중요 수동 캔버스 ID 실시간 업데이트 동작]
     // config 에 캔버스 ID들이 수동 기입되어 있다면 각 캔버스를 실시간 수정(덮어쓰기)합니다.
@@ -994,108 +900,43 @@ async function buildDailyReportMarkdown({ date, memberReports }) {
     dailyArchiveContent += `> 당일 팀원들의 Notion Daily Work Log 취합 요약 브리핑 히스토리입니다.\n\n---\n\n`;
 
     for (const rep of memberReports) {
-      const cleanName = rep.memberName.replace(' 님', '').trim();
-      const memberEmail = MEMBER_EMAILS[cleanName];
-      const tripInfo = approvedTrips.get(cleanName);
-      const isTripFromSupabase = !!tripInfo;
-      const isSmartFarmTrip = tripInfo ? tripInfo.isSmartFarm : false;
-      const leaveTypeFromSupabase = memberEmail ? approvedLeaves[memberEmail.trim().toLowerCase()] : null;
-
-      let statusLabel = '';
-      if (leaveTypeFromSupabase) {
-        statusLabel = ` - ${leaveTypeFromSupabase}`;
-      } else if (isTripFromSupabase) {
-        statusLabel = isSmartFarmTrip ? ' - 출장(스마트팜)' : ' - 출장(스마트팜 외)';
-      } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
-        let hasVacation = false;
-        let hasMorningHalf = false;
-        let hasAfternoonHalf = false;
-        let hasHalfDay = false;
-        let hasBusinessTrip = false;
-
-        rep.dailyLogs.forEach(log => {
-          const t = log.title || '';
-          if (t.includes('오전반차') || t.includes('오전 반차')) {
-            hasMorningHalf = true;
-          } else if (t.includes('오후반차') || t.includes('오후 반차')) {
-            hasAfternoonHalf = true;
-          } else if (t.includes('반차')) {
-            hasHalfDay = true;
-          } else if (t.includes('연차')) {
-            hasVacation = true;
-          } else if (t.includes('출장')) {
-            hasBusinessTrip = true;
-          }
-        });
-
-        if (hasVacation) statusLabel = ' - 연차';
-        else if (hasMorningHalf) statusLabel = ' - 오전반차';
-        else if (hasAfternoonHalf) statusLabel = ' - 오후반차';
-        else if (hasHalfDay) statusLabel = ' - 반차';
-        else if (hasBusinessTrip) statusLabel = ' - 출장';
-      }
+      const { cleanName, statusLabel, emptyText } = await getMemberStatus(rep, approvedLeaves, approvedTrips);
 
       dailyArchiveContent += `## 👤 ${cleanName} 님${statusLabel}\n\n`;
 
       if (!rep.dailyLogs || rep.dailyLogs.length === 0) {
-        let emptyText = '* _오늘 기록된 일일 업무 일지가 없습니다._';
-        if (leaveTypeFromSupabase) {
-          emptyText = `* _금일 ${leaveTypeFromSupabase}입니다._`;
-        } else if (isTripFromSupabase && !isSmartFarmTrip) {
-          emptyText = '* _금일 출장(스마트팜 외)입니다._';
-        }
         dailyArchiveContent += `${emptyText}\n\n`;
       } else {
         for (const log of rep.dailyLogs) {
-          const isOutsideWork = 
-            (log.title && log.title.includes('스마트팜 외 업무')) ||
-            log.taskRelations.some(rel => {
-              const taskInfo = rep.tasksMap && rep.tasksMap[rel.id];
-              return taskInfo && (
-                taskInfo.projectName === '스마트팜 외 업무' ||
-                taskInfo.name === '스마트팜 외 업무' ||
-                (taskInfo.name && taskInfo.name.includes('스마트팜 외 업무'))
-              );
-            });
+          const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
+          dailyArchiveContent += `* **[${cleanTitle}](${log.url})**${formatProjectLabel(log, rep.tasksMap)}\n`;
 
-          if (isOutsideWork) {
-            const taskNames = log.taskRelations
-              .map(rel => rep.tasksMap[rel.id]?.name)
-              .filter(Boolean);
-            const taskNameStr = taskNames.length > 0 ? taskNames.join(', ') : '스마트팜 외 업무';
-            
-            dailyArchiveContent += `* **[${taskNameStr} (스마트팜 외 업무)](${log.url})**\n\n`;
-          } else {
-            const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
-            dailyArchiveContent += `* **[${cleanTitle}](${log.url})**\n`;
+          const logImages = [];
+          if (log.details && log.details.trim()) {
+            const detailLines = log.details.trim().split('\n');
+            for (const line of detailLines) {
+              if (line.trim()) {
+                const lineImages = [];
+                const formattedLine = await formatLinksInText(line.trim(), lineImages);
 
-            const logImages = [];
-            if (log.details && log.details.trim()) {
-              const detailLines = log.details.trim().split('\n');
-              for (const line of detailLines) {
-                if (line.trim()) {
-                  const lineImages = [];
-                  const formattedLine = await formatLinksInText(line.trim(), lineImages);
-
-                  const cleanLineText = formattedLine.replace(/[•\-\*\s\(\)]/g, '').trim();
-                  if (cleanLineText.length > 0) {
-                    dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
-                  }
-                  if (lineImages.length > 0) {
-                    for (const img of lineImages) {
-                      logImages.push(img);
-                    }
+                const cleanLineText = formattedLine.replace(/[•\-\*\s\(\)]/g, '').trim();
+                if (cleanLineText.length > 0) {
+                  dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
+                }
+                if (lineImages.length > 0) {
+                  for (const img of lineImages) {
+                    logImages.push(img);
                   }
                 }
               }
             }
-
-            for (const img of logImages) {
-              const shortUrl = img.shortUrl || await getPermanentImageUrl(img.url);
-              dailyArchiveContent += `\n![${img.label || '이미지 첨부'}](${shortUrl})\n`;
-            }
-            dailyArchiveContent += `\n`;
           }
+
+          for (const img of logImages) {
+            const shortUrl = img.shortUrl || await getPermanentImageUrl(img.url);
+            dailyArchiveContent += `\n![${img.label || '이미지 첨부'}](${shortUrl})\n`;
+          }
+          dailyArchiveContent += `\n`;
         }
       }
       dailyArchiveContent += `\n---\n\n`;
@@ -1193,46 +1034,7 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
 
     // 2. 담당자별로 일지 단위 메시지 전송 (한슬 토글 최적화 및 50개 블록 제한 원천 차단)
     for (const rep of memberReports) {
-      const cleanName = rep.memberName.replace(' 님', '').trim();
-      const memberEmail = MEMBER_EMAILS[cleanName];
-      const tripInfo = approvedTrips.get(cleanName);
-      const isTripFromSupabase = !!tripInfo;
-      const isSmartFarmTrip = tripInfo ? tripInfo.isSmartFarm : false;
-      const leaveTypeFromSupabase = memberEmail ? approvedLeaves[memberEmail.trim().toLowerCase()] : null;
-
-      let statusLabel = '';
-      if (leaveTypeFromSupabase) {
-        statusLabel = ` - ${leaveTypeFromSupabase}`;
-      } else if (isTripFromSupabase) {
-        statusLabel = isSmartFarmTrip ? ' - 출장(스마트팜)' : ' - 출장(스마트팜 외)';
-      } else if (rep.dailyLogs && rep.dailyLogs.length > 0) {
-        let hasVacation = false;
-        let hasMorningHalf = false;
-        let hasAfternoonHalf = false;
-        let hasHalfDay = false;
-        let hasBusinessTrip = false;
-
-        rep.dailyLogs.forEach(log => {
-          const t = log.title || '';
-          if (t.includes('오전반차') || t.includes('오전 반차')) {
-            hasMorningHalf = true;
-          } else if (t.includes('오후반차') || t.includes('오후 반차')) {
-            hasAfternoonHalf = true;
-          } else if (t.includes('반차')) {
-            hasHalfDay = true;
-          } else if (t.includes('연차')) {
-            hasVacation = true;
-          } else if (t.includes('출장')) {
-            hasBusinessTrip = true;
-          }
-        });
-
-        if (hasVacation) statusLabel = ' - 연차';
-        else if (hasMorningHalf) statusLabel = ' - 오전반차';
-        else if (hasAfternoonHalf) statusLabel = ' - 오후반차';
-        else if (hasHalfDay) statusLabel = ' - 반차';
-        else if (hasBusinessTrip) statusLabel = ' - 출장';
-      }
+      const { cleanName, statusLabel, emptyText } = await getMemberStatus(rep, approvedLeaves, approvedTrips);
 
       dailyArchiveContent += `## 👤 ${cleanName} 님${statusLabel}\n\n`;
 
@@ -1248,12 +1050,6 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
       });
 
       if (!rep.dailyLogs || rep.dailyLogs.length === 0) {
-        let emptyText = '* _오늘 기록된 일일 업무 일지가 없습니다._';
-        if (leaveTypeFromSupabase) {
-          emptyText = `* _금일 ${leaveTypeFromSupabase}입니다._`;
-        } else if (isTripFromSupabase && !isSmartFarmTrip) {
-          emptyText = '* _금일 출장(스마트팜 외)입니다._';
-        }
         dailyArchiveContent += `${emptyText}\n\n`;
         
         memberBlocks.push({
@@ -1265,137 +1061,110 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
         });
       } else {
         for (const log of rep.dailyLogs) {
-          const isOutsideWork = 
-            (log.title && log.title.includes('스마트팜 외 업무')) ||
-            log.taskRelations.some(rel => {
-              const taskInfo = rep.tasksMap && rep.tasksMap[rel.id];
-              return taskInfo && (
-                taskInfo.projectName === '스마트팜 외 업무' ||
-                taskInfo.name === '스마트팜 외 업무' ||
-                (taskInfo.name && taskInfo.name.includes('스마트팜 외 업무'))
-              );
-            });
+          const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
+          const projectLabel = formatProjectLabel(log, rep.tasksMap);
+          dailyArchiveContent += `* **[${cleanTitle}](${log.url})**${projectLabel}\n`;
 
-          if (isOutsideWork) {
-            const taskNames = log.taskRelations
-              .map(rel => rep.tasksMap[rel.id]?.name)
-              .filter(Boolean);
-            const taskNameStr = taskNames.length > 0 ? taskNames.join(', ') : '스마트팜 외 업무';
-            
-            dailyArchiveContent += `* **[${taskNameStr} (스마트팜 외 업무)](${log.url})**\n\n`;
+          let logItemText = `• <${log.url}|*${cleanTitle}*>${projectLabel ? ` _(${projectLabel.replace(' · ', '')})_` : ''}\n`;
+          const logImages = [];
 
-            memberBlocks.push({
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `• <${log.url}|*${taskNameStr} (스마트팜 외 업무)*>`
-              }
-            });
-          } else {
-            const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
-            dailyArchiveContent += `* **[${cleanTitle}](${log.url})**\n`;
+          if (log.details && log.details.trim()) {
+            const detailLines = log.details.trim().split('\n');
+            const formattedDetailLines = []; // AI 구조화 입력용 (이미지 제외 텍스트 줄)
+            let rawItemBody = ''; // AI 실패 시 폴백용 기존 나열 본문
 
-            let logItemText = `• <${log.url}|*${cleanTitle}*>\n`;
-            const logImages = [];
+            for (const line of detailLines) {
+              if (line.trim()) {
+                const lineImages = [];
+                const formattedLine = await formatLinksInText(line.trim(), lineImages);
 
-            if (log.details && log.details.trim()) {
-              const detailLines = log.details.trim().split('\n');
-              const formattedDetailLines = []; // AI 구조화 입력용 (이미지 제외 텍스트 줄)
-              let rawItemBody = ''; // AI 실패 시 폴백용 기존 나열 본문
+                // 이미지 링크가 제거된 후 남은 텍스트가 유의미하지 않다면 본문 추가를 스킵
+                const cleanLineText = formattedLine.replace(/[•\-\*\s\(\)]/g, '').trim();
+                if (cleanLineText.length === 0) {
+                  if (lineImages.length > 0) {
+                    for (const img of lineImages) {
+                      logImages.push(img);
+                    }
+                  }
+                } else {
+                  // 깃허브 아카이브는 원문 그대로 무손실 기록 (변경 감지 비교의 기준이기도 함)
+                  dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
+                  formattedDetailLines.push(formattedLine.trim());
 
-              for (const line of detailLines) {
-                if (line.trim()) {
-                  const lineImages = [];
-                  const formattedLine = await formatLinksInText(line.trim(), lineImages);
-
-                  // 이미지 링크가 제거된 후 남은 텍스트가 유의미하지 않다면 본문 추가를 스킵
-                  const cleanLineText = formattedLine.replace(/[•\-\*\s\(\)]/g, '').trim();
-                  if (cleanLineText.length === 0) {
-                    if (lineImages.length > 0) {
-                      for (const img of lineImages) {
-                        logImages.push(img);
-                      }
+                  // 글자수 제한 체크 (3000자 초과 방지)
+                  const appendStr = `  - (상세: ${formattedLine.trim()})\n`;
+                  if (rawItemBody.length + appendStr.length > 2800) {
+                    const limitNotice = `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
+                    if (!rawItemBody.includes(limitNotice)) {
+                      rawItemBody += limitNotice;
                     }
                   } else {
-                    // 깃허브 아카이브는 원문 그대로 무손실 기록 (변경 감지 비교의 기준이기도 함)
-                    dailyArchiveContent += `  - (상세: ${formattedLine.trim()})\n`;
-                    formattedDetailLines.push(formattedLine.trim());
+                    rawItemBody += appendStr;
+                  }
 
-                    // 글자수 제한 체크 (3000자 초과 방지)
-                    const appendStr = `  - (상세: ${formattedLine.trim()})\n`;
-                    if (rawItemBody.length + appendStr.length > 2800) {
-                      const limitNotice = `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
-                      if (!rawItemBody.includes(limitNotice)) {
-                        rawItemBody += limitNotice;
-                      }
-                    } else {
-                      rawItemBody += appendStr;
-                    }
-
-                    if (lineImages.length > 0) {
-                      for (const img of lineImages) {
-                        logImages.push(img);
-                      }
+                  if (lineImages.length > 0) {
+                    for (const img of lineImages) {
+                      logImages.push(img);
                     }
                   }
                 }
               }
+            }
 
-              // [AI 정리] 슬랙 메시지 본문은 선임 상급자가 읽기 편하게 구조화 (내용 무손실)
-              if (formattedDetailLines.length > 0) {
-                try {
-                  const organized = await aiSummarizer.organizeMemberLog(cleanTitle, formattedDetailLines);
-                  let organizedBody = organized
-                    .split('\n')
-                    .map(l => (l.trim() ? `  ${l.replace(/\s+$/, '')}` : ''))
-                    .join('\n') + '\n';
-                  if (logItemText.length + organizedBody.length > 2900) {
-                    organizedBody = organizedBody.slice(0, 2900 - logItemText.length)
-                      + `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
-                  }
-                  logItemText += organizedBody;
-                  console.log(`  -> [AI 정리] '${cleanName}' 님 '${cleanTitle}' 일반 보고 구조화 완료`);
-                } catch (aiErr) {
-                  console.warn(`  -> ⚠️ [AI 정리] 실패, 원문 나열로 폴백 (${cleanTitle}):`, aiErr.message);
-                  logItemText += rawItemBody;
+            // [AI 정리] 슬랙 메시지 본문은 선임 상급자가 읽기 편하게 구조화 (내용 무손실)
+            if (formattedDetailLines.length > 0) {
+              try {
+                const organized = await aiSummarizer.organizeMemberLog(cleanTitle, formattedDetailLines);
+                let organizedBody = organized
+                  .split('\n')
+                  .map(l => (l.trim() ? `  ${l.replace(/\s+$/, '')}` : ''))
+                  .join('\n') + '\n';
+                if (logItemText.length + organizedBody.length > 2900) {
+                  organizedBody = organizedBody.slice(0, 2900 - logItemText.length)
+                    + `\n... (본문이 너무 길어 생략되었습니다. 전체 내용은 노션 링크에서 확인해주세요.)\n`;
                 }
+                logItemText += organizedBody;
+                console.log(`  -> [AI 정리] '${cleanName}' 님 '${cleanTitle}' 일반 보고 구조화 완료`);
+              } catch (aiErr) {
+                console.warn(`  -> ⚠️ [AI 정리] 실패, 원문 나열로 폴백 (${cleanTitle}):`, aiErr.message);
+                logItemText += rawItemBody;
               }
             }
-
-            memberBlocks.push({
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: logItemText
-              }
-            });
-
-            // 이미지가 존재하는 경우 본문 바로 밑에 image 블록을 배치
-            for (const img of logImages) {
-              const shortUrl = img.shortUrl || await getPermanentImageUrl(img.url);
-              
-              // 깃허브 아카이브용 마크다운에도 이미지 렌더링 태그 추가
-              dailyArchiveContent += `\n![${img.label || '이미지 첨부'}](${shortUrl})\n`;
-
-              if (isSlackRenderableImage(shortUrl)) {
-                memberBlocks.push({
-                  type: 'image',
-                  image_url: shortUrl,
-                  alt_text: img.label || '이미지 첨부'
-                });
-              } else {
-                // SVG 등 Slack 미지원 포맷은 image 블록 대신 링크로 대체
-                memberBlocks.push({
-                  type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: `  📎 <${shortUrl}|이미지 보기: ${img.label || '이미지 첨부'}>`
-                  }
-                });
-              }
-            }
-            dailyArchiveContent += `\n`;
           }
+
+          memberBlocks.push({
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: logItemText
+            }
+          });
+
+          // 이미지가 존재하는 경우 본문 바로 밑에 image 블록을 배치
+          for (const img of logImages) {
+            const shortUrl = img.shortUrl || await getPermanentImageUrl(img.url);
+            
+            // 깃허브 아카이브용 마크다운에도 이미지 렌더링 태그 추가
+            dailyArchiveContent += `\n![${img.label || '이미지 첨부'}](${shortUrl})\n`;
+
+            if (isSlackRenderableImage(shortUrl)) {
+              memberBlocks.push({
+                type: 'image',
+                image_url: shortUrl,
+                alt_text: img.label || '이미지 첨부'
+              });
+            } else {
+              // SVG 등 Slack 미지원 포맷은 image 블록 대신 링크로 대체
+              memberBlocks.push({
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `  📎 <${shortUrl}|이미지 보기: ${img.label || '이미지 첨부'}>`
+                }
+              });
+            }
+          }
+          dailyArchiveContent += `\n`;
         }
       }
 
@@ -1522,7 +1291,7 @@ async function findUserIdByEmail(email) {
   return null;
 }
 
-async function sendChannelReminder({ mentionIds, targetChannelName = '스마트팜-workplan' }) {
+async function sendChannelReminder({ mentionIds, targetChannelName = 'hansl-workplan' }) {
   try {
     if (!mentionIds || mentionIds.length === 0) {
       console.log(`[Slack] 독려 대상자가 없어 채널 메시지 발송을 생략합니다.`);
@@ -1549,7 +1318,7 @@ async function sendChannelReminder({ mentionIds, targetChannelName = '스마트�
   }
 }
 
-async function sendProjectCompletedNotification({ projectName, projectUrl, pmName, targetChannelName = '스마트팜-workplan' }) {
+async function sendProjectCompletedNotification({ projectName, projectUrl, pmName, targetChannelName = 'hansl-workplan' }) {
   try {
     const channelId = await findChannelIdByName(targetChannelName);
     const text = `🎉 *[프로젝트 완료 자동 전환]*\n진행률이 100%에 도달하여 프로젝트가 자동으로 완료 처리되었습니다!\n*프로젝트명*: <${projectUrl}|${projectName}>\n*담당자(PM)*: ${pmName}`;
@@ -1569,9 +1338,9 @@ async function sendProjectCompletedNotification({ projectName, projectUrl, pmNam
 
 async function sendOverdueTasksReminder({ memberName, position, tasks }) {
   try {
-    const email = MEMBER_EMAILS[memberName];
+    const email = await getMemberEmail(memberName);
     if (!email) {
-      console.warn(`[지연 알림] '${memberName}' 님의 이메일 정보(MEMBER_EMAILS)를 찾지 못해 DM 발송을 생략합니다.`);
+      console.warn(`[지연 알림] '${memberName}' 님의 슬랙 이메일을 찾지 못해 DM 발송을 생략합니다.`);
       return false;
     }
     const userId = await findUserIdByEmail(email);
@@ -1621,7 +1390,7 @@ module.exports = {
   sendDailyReport,
   findUserIdByEmail,
   sendChannelReminder,
-  MEMBER_EMAILS,
+  getMemberEmail,
   buildDailyReportMarkdown,
   cleanUpDailyReportMessages,
   sendProjectCompletedNotification,

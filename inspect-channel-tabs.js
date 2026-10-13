@@ -4,10 +4,10 @@ require('dotenv').config();
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
 async function inspect() {
-  const channelName = '스마트팜-workplan';
+  const channelName = 'hansl-workplan';
   console.log(`🔍 [슬랙 채널 인스펙션] '#${channelName}' 내의 캔버스 탭 현황 조회 중...`);
   try {
-    // 1. 채널 리스트를 돌며 스마트팜-workplan 채널 정보 획득
+    // 1. 채널 리스트를 돌며 hansl-workplan 채널 정보 획득
     let cursor;
     let targetChannel = null;
     

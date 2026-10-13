@@ -82,7 +82,7 @@ async function callClaude(prompt) {
 /* ============================================================
  * A) 일반 보고 정리 — 선임 상급자용, 내용 누락 금지, Slack mrkdwn
  * ============================================================ */
-const ORGANIZE_PROMPT = `너는 스마트팜 개발팀의 업무 보고 비서다.
+const ORGANIZE_PROMPT = `너는 한슬 팀의 업무 보고 비서다.
 아래는 팀원이 노션에 작성한 업무 일지 한 건의 원문(줄 단위 나열)이다.
 바로 위 선임 상급자가 보고받았을 때 알아듣기 편하도록, 원문을 구조화해서 다시 써라.
 
@@ -119,8 +119,8 @@ async function organizeMemberLog(title, detailLines) {
 /* ============================================================
  * B) 요약 브리핑 — 대표이사용(비전문가), 핵심 전부 포함, GFM markdown
  * ============================================================ */
-const SUMMARY_PROMPT = `너는 스마트팜 개발팀의 선임 상급자다.
-아래는 팀원들이 노션에 작성한 당일 업무 일지의 원문 전문이다.
+const SUMMARY_PROMPT = `너는 한슬 팀의 선임 상급자다.
+아래는 팀원들이 노션에 작성한 당일 업무 일지의 원문 전문이다. 스마트팜뿐 아니라 한슬의 모든 프로젝트·업무가 포함되며, 모두 같은 비중으로 다룬다.
 전문가가 아닌 대표이사에게 보고하는 요약 브리핑을 작성하라.
 
 [절대 규칙]
@@ -131,10 +131,11 @@ const SUMMARY_PROMPT = `너는 스마트팜 개발팀의 선임 상급자다.
 
 [출력 형식 - 마크다운, 정확히 지킬 것]
 ### 👤 {이름} 님
-* **{업무명 - 대표이사가 이해하기 쉬운 표현으로 다듬기 가능}**
+* **{업무명 - 대표이사가 이해하기 쉬운 표현으로 다듬기 가능}** ({프로젝트명})
   - {핵심 문장. 중요한 결론·수치는 **굵게**}
   - {문장 단위로 2~4개 불릿. 결정사항/문제/다음 단계가 있으면 반드시 포함}
 
+- 원문에 프로젝트명이 있으면 업무명 뒤에 괄호로 붙이고, 없으면 괄호째 생략한다.
 - 팀원 순서와 업무는 원문 순서를 따른다. 일지가 없는 팀원은 쓰지 않는다.
 - 위 형식의 마크다운만 출력한다. 서론/맺음말 금지.
 
@@ -149,7 +150,10 @@ function buildSummaryInput(memberReports, dateLabel) {
     body += `━━━ 팀원: ${cleanName} ━━━\n`;
     for (const log of rep.dailyLogs) {
       const cleanTitle = log.title ? log.title.replace(/[📄@]/g, '').trim() : '제목 없음';
-      body += `\n[태스크: ${cleanTitle}]\n`;
+      const projectNames = [...new Set((log.taskRelations || [])
+        .map(rel => rep.tasksMap && rep.tasksMap[rel.id]?.projectName)
+        .filter(Boolean))];
+      body += `\n[태스크: ${cleanTitle}]${projectNames.length > 0 ? ` (프로젝트: ${projectNames.join(', ')})` : ''}\n`;
       if (log.details && log.details.trim()) {
         const cleanedDetails = log.details
           .split('\n')

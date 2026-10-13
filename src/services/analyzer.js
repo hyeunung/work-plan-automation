@@ -82,7 +82,7 @@ function analyzeWork(weeklyPage, dailyLogs, tasksMap) {
       
       // 1단계: 멘션이 진짜 하위 태스크인지, 아니면 상위 프로젝트/그룹인지 판단
       // Tasks DB에 정보가 있고, 상위 프로젝트명이 기재되어 있다면 하위 태스크로 판정!
-      const isRealTask = taskInfo && taskInfo.projectName && taskInfo.projectName !== '스마트팜 외 업무';
+      const isRealTask = taskInfo && taskInfo.projectName;
       
       if (isRealTask) {
         // 진짜 하위 태스크를 만난 경우
@@ -97,7 +97,7 @@ function analyzeWork(weeklyPage, dailyLogs, tasksMap) {
         };
         analysisResults.push(currentTask);
       } else {
-        // 상위 프로젝트 또는 그룹인 경우 (예: "스마트팜 외 업무", "무인대차 1차 프로토타입")
+        // 상위 프로젝트 또는 그룹인 경우 (예: "무인대차 1차 프로토타입")
         currentProject = {
           id: taskId,
           name: rawName

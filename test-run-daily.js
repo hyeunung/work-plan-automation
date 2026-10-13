@@ -57,7 +57,7 @@ async function run() {
     console.warn(`  -> ⚠️ 유저 ID 동적 조회 실패 (백업 ID 사용):`, authErr.message);
   }
 
-  const members = ['김윤회', '김희승', '최현빈'];
+  const members = await notionService.getTeamMemberNames(); // Team Members DB 전원
   const memberReports = [];
 
   for (const memberName of members) {
