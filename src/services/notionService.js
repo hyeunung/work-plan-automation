@@ -299,6 +299,7 @@ async function getPageContentDetails(blockId) {
  * Tasks 데이터베이스에서 Task ID 목록에 해당하는 상세 정보(Task 제목 등)를 가져옵니다.
  */
 const projectCache = {};
+const projectCategoryCache = {};
 
 async function getTasksMap(taskIds) {
   const taskMap = {};
@@ -311,10 +312,12 @@ async function getTasksMap(taskIds) {
       // Project 이름 긁어오기 (중복 조회 방지 캐싱 적용)
       const projectRelation = page.properties['Project']?.relation || [];
       let projectName = '';
+      let projectCategory = '';
       if (projectRelation.length > 0) {
         const projectId = projectRelation[0].id;
         if (projectCache[projectId]) {
           projectName = projectCache[projectId];
+          projectCategory = projectCategoryCache[projectId] || '';
         } else {
           try {
             const projectPage = await notion.pages.retrieve({ page_id: projectId });
@@ -322,7 +325,10 @@ async function getTasksMap(taskIds) {
                           projectPage.properties['이름']?.title?.[0]?.plain_text || 
                           projectPage.properties['Project Name']?.title?.[0]?.plain_text || 
                           projectPage.properties['Name']?.title?.[0]?.plain_text || '';
+            // Projects DB '선택' (무인대차/자동화설비/외부 프로젝트/기타 등) — 대표 보고에서 분류 힌트로 사용
+            projectCategory = projectPage.properties['선택']?.select?.name || '';
             projectCache[projectId] = projectName;
+            projectCategoryCache[projectId] = projectCategory;
           } catch (projErr) {
             console.error(`프로젝트(${projectId}) 조회 실패:`, projErr.message);
           }
@@ -333,7 +339,8 @@ async function getTasksMap(taskIds) {
         name: taskName,
         url: formatNotionPageUrl(taskName, taskId),
         dueDate: dueDate,
-        projectName: projectName
+        projectName: projectName,
+        projectCategory: projectCategory
       };
     }
   } catch (error) {

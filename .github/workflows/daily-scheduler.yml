@@ -16,7 +16,8 @@ on:
           - weekly-resend
           - weekly-reminder
           - weekly-late-audit
-          - smartfarm-weekly
+          - executive-weekly
+          - smartfarm-weekly # (deprecated) executive-weekly 와 동일
           - overdue-tasks
           - project-sync
       start_date:
@@ -91,8 +92,8 @@ jobs:
             node -e "require('./src/app').executeWeeklyReminderPipeline()"
           elif [ "$TYPE" = "weekly-late-audit" ]; then
             node -e "require('./src/app').executeWeeklyLateLogAuditPipeline().catch(e => { console.error(e); process.exit(1); })"
-          elif [ "$TYPE" = "smartfarm-weekly" ]; then
-            node -e "require('./src/app').executeSmartfarmWeeklyPipeline().catch(e => { console.error(e); process.exit(1); })"
+          elif [ "$TYPE" = "executive-weekly" ] || [ "$TYPE" = "smartfarm-weekly" ]; then
+            node -e "require('./src/app').executeExecutiveWeeklyPipeline().catch(e => { console.error(e); process.exit(1); })"
           elif [ "$TYPE" = "daily-reminder" ]; then
             node -e "require('./src/app').executeDailyReminderPipeline()"
           elif [ "$TYPE" = "daily-backfill" ]; then

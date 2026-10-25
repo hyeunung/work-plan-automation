@@ -900,7 +900,9 @@ if (require.main === module) {
 module.exports = {
   getReportDateRanges,
   getLateWriteInfo,
-  executeSmartfarmWeeklyPipeline: (...args) => require('./services/smartfarmWeeklyReport').executeSmartfarmWeeklyPipeline(...args),
+  executeExecutiveWeeklyPipeline: (...args) => require('./services/executiveWeeklyReport').executeExecutiveWeeklyPipeline(...args),
+  /** @deprecated 'smartfarm-weekly' 구 트리거 호환용. 실제로는 한슬 전체 주간보고(executive-weekly)를 실행한다 */
+  executeSmartfarmWeeklyPipeline: (...args) => require('./services/executiveWeeklyReport').executeExecutiveWeeklyPipeline(...args),
   executeWeeklyPipeline,
   executeWeeklyLateLogAuditPipeline,
   executeDailyPipeline,
