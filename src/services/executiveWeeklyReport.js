@@ -184,6 +184,12 @@ ${guide}
 [출력 규칙]
 - 지침의 "보고서 형식"과 "체크리스트"를 전부 충족하는 보고서 본문만 출력한다. 서론·맺음말·설명·코드블록 금지.
 - 섹션은 수집 데이터 A의 프로젝트 순서대로 "N. 프로젝트명 (담당자 · 담당자)" 제목을 붙인다. 프로젝트를 임의로 합치거나 빼지 않는다.
+- 섹션 제목 줄은 "N. " 숫자로 시작하는 한 줄로만 쓰고, 제목 줄에 볼드·기호를 넣지 않는다 (Slack 레이아웃이 제목을 따로 꾸민다).
+- 각 프로젝트 섹션 본문은 결과 중심 2~4문장. 문단은 섹션당 최대 2개. 일지 하나하나를 나열하지 말고 같은 흐름은 한 문장으로 묶는다.
+- 수치는 보고서 전체에서 2~4개만 남긴다. 나머지 수치는 "크게 줄였다", "대부분 해소했다"처럼 말로 바꾼다.
+- 전문 용어 인용 블록("> ")은 보고서 전체에서 최대 1개, 꼭 필요할 때만, 해당 섹션의 맨 끝에 둔다.
+- "이번 주 계획" 섹션은 프로젝트마다 한 문단(1~2문장)으로 쓰고 문단 사이에 빈 줄을 넣는다.
+- 전체 분량 1,200~1,600자. 넘치면 주제를 빼지 말고 각 문장을 더 압축한다.
 - 볼드는 **...** (별표 2개), 전문 용어 설명은 "> " 인용 블록을 사용한다.
 - 원문에 없는 내용을 지어내지 않는다.
 
@@ -194,6 +200,105 @@ ${dataSection}`;
 /** GFM 마크다운 보고서를 Slack mrkdwn으로 변환 (**bold** -> *bold*) */
 function toSlackMrkdwn(markdown) {
   return markdown.replace(/\*\*(.+?)\*\*/g, '*$1*');
+}
+
+const MAX_REPORT_CHARS = 1700; // 지침 상한 1,600자 + 여유. 넘으면 한 번 압축 재생성
+
+/**
+ * 보고서 텍스트를 구조로 분해: 제목, 보고기간 줄, 섹션[{ title, body }], 맺음말.
+ * 섹션 경계는 "N. " 로 시작하는 줄.
+ */
+function parseReport(report) {
+  const lines = report.split('\n');
+  const result = { title: '', period: '', sections: [], closing: '' };
+  let current = null;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!result.title && line.trim()) { result.title = line.trim(); continue; }
+    if (!result.period && /^보고기간\s*:/.test(line.trim())) { result.period = line.trim(); continue; }
+    if (line.trim().startsWith(CLOSING_LINE)) { result.closing = line.trim(); continue; }
+    const head = line.match(/^\s*(\d+)\.\s+(.+)$/);
+    if (head) {
+      current = { title: `${head[1]}. ${head[2].replace(/\*\*/g, '').trim()}`, lines: [] };
+      result.sections.push(current);
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+  for (const sec of result.sections) {
+    // 빈 줄 기준이 아니라 "줄" 기준으로 문단을 재구성: 일반 줄은 각각 한 문단, 연속된 인용 줄은 한 덩어리
+    const paragraphs = [];
+    let quote = [];
+    const flushQuote = () => { if (quote.length) { paragraphs.push(quote.join('\n')); quote = []; } };
+    for (const l of sec.lines) {
+      const t = l.trim();
+      if (!t) { flushQuote(); continue; }
+      if (t.startsWith('>')) { quote.push(t); continue; }
+      flushQuote();
+      paragraphs.push(t);
+    }
+    flushQuote();
+    sec.body = paragraphs.join('\n\n');
+    delete sec.lines;
+  }
+  return result;
+}
+
+/** Slack Block Kit 레이아웃: 헤더 → 보고기간 → (섹션 제목 볼드 + 본문, 구분선) 반복 → 맺음말 */
+function buildSlackBlocks(report) {
+  const parsed = parseReport(report);
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: parsed.title || REPORT_TITLE, emoji: false } }
+  ];
+  if (parsed.period) {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: parsed.period }] });
+  }
+  blocks.push({ type: 'divider' });
+  for (const sec of parsed.sections) {
+    const text = `*${sec.title}*\n\n${toSlackMrkdwn(sec.body)}`.slice(0, 2900);
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text } });
+    blocks.push({ type: 'divider' });
+  }
+  if (parsed.closing) {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: parsed.closing }] });
+  }
+  return blocks;
+}
+
+/** 블록 레이아웃을 콘솔 미리보기용 텍스트로 (DRY RUN) */
+function renderBlocksPreview(blocks) {
+  return blocks.map(b => {
+    if (b.type === 'header') return `━━ ${b.text.text} ━━`;
+    if (b.type === 'context') return b.elements.map(e => e.text).join(' ');
+    if (b.type === 'divider') return '────────────';
+    if (b.type === 'section') return b.text.text;
+    return '';
+  }).join('\n');
+}
+
+/**
+ * 같은 보고기간의 기존 봇 게시물을 삭제 (재실행 시 중복 방지).
+ * WEEKLY_REPORT_REPLACE=0 이면 삭제하지 않고 새 글만 추가한다.
+ */
+async function cleanUpPreviousReports(slack, periodLine) {
+  if (process.env.WEEKLY_REPORT_REPLACE === '0' || !periodLine) return 0;
+  let deleted = 0;
+  try {
+    const auth = await slack.auth.test();
+    const history = await slack.conversations.history({ channel: REPORT_CHANNEL_ID, limit: 50 });
+    for (const msg of history.messages || []) {
+      const isBot = msg.user === auth.user_id || !!msg.bot_id;
+      const text = msg.text || '';
+      if (isBot && text.includes('주간업무 보고') && text.includes(periodLine)) {
+        await slack.chat.delete({ channel: REPORT_CHANNEL_ID, ts: msg.ts });
+        deleted++;
+      }
+    }
+  } catch (err) {
+    console.warn(`  -> 이전 게시물 정리 실패 (무시하고 계속): ${err.message}`);
+  }
+  if (deleted > 0) console.log(`  -> 같은 보고기간의 이전 게시물 ${deleted}건 삭제`);
+  return deleted;
 }
 
 async function executeExecutiveWeeklyPipeline() {
@@ -246,17 +351,40 @@ async function executeExecutiveWeeklyPipeline() {
   const guide = fs.readFileSync(GUIDE_PATH, 'utf8');
   const prompt = buildPrompt(guide, buildDataSection(projectGroups, memberData, ranges), ranges);
   console.log(`- Claude로 보고서 생성 중...`);
-  const report = await aiSummarizer.callClaude(prompt);
+  let report = await aiSummarizer.callClaude(prompt);
+  console.log(`- 1차 생성 ${report.length}자`);
+  if (report.length > MAX_REPORT_CHARS) {
+    console.log(`  -> 상한(${MAX_REPORT_CHARS}자) 초과. 주제 유지·문장 압축으로 1회 재생성`);
+    const retryPrompt = `${prompt}
+
+[이전 출력 - ${report.length}자로 너무 길다]
+${report}
+
+[재작성 지시]
+위 이전 출력을 바탕으로 같은 보고서를 1,200~1,600자로 다시 써라. 프로젝트 섹션과 업무 주제는 하나도 빼지 말고, 각 섹션을 2~3문장으로 압축하고 수치·인용 블록을 줄여라. 형식 규칙은 그대로 지킨다. 보고서 본문만 출력한다.`;
+    const retried = await aiSummarizer.callClaude(retryPrompt);
+    if (retried.includes(REPORT_TITLE) && retried.includes(CLOSING_LINE) && retried.length < report.length) {
+      report = retried;
+      console.log(`  -> 재생성 ${report.length}자`);
+    } else {
+      console.warn('  -> 재생성 결과가 형식에 맞지 않거나 더 길어 1차 결과를 사용');
+    }
+  }
 
   if (!report.includes(REPORT_TITLE) || !report.includes(CLOSING_LINE)) {
     throw new Error('AI 보고서가 기대 형식(제목/맺음말)과 다릅니다. 발송을 중단합니다.');
   }
-  console.log(`- 보고서 생성 완료 (${report.length}자)`);
+  const parsedForCheck = parseReport(report);
+  if (parsedForCheck.sections.length < projectGroups.length) {
+    console.warn(`  -> ⚠️ 섹션 수(${parsedForCheck.sections.length})가 포함 프로젝트 수(${projectGroups.length})보다 적습니다. 섹션 제목 형식("N. ")을 확인하세요.`);
+  }
+  console.log(`- 보고서 생성 완료 (${report.length}자, 섹션 ${parsedForCheck.sections.length}개)`);
 
   // 4. DRY RUN 이면 아카이브·발송 없이 미리보기만 출력
   const slackText = toSlackMrkdwn(report);
+  const blocks = buildSlackBlocks(report);
   if (DRY_RUN) {
-    console.log(`\n--- [DRY RUN] 아카이브·발송 생략, 보고서 미리보기 ---\n${slackText}\n--- [DRY RUN 끝] ---`);
+    console.log(`\n--- [DRY RUN] 아카이브·발송 생략, Slack 레이아웃 미리보기 ---\n${renderBlocksPreview(blocks)}\n--- [DRY RUN 끝] ---`);
     return;
   }
 
@@ -266,13 +394,14 @@ async function executeExecutiveWeeklyPipeline() {
   fs.writeFileSync(archivePath, report + '\n');
   console.log(`- 아카이브 저장 완료: ${archivePath}`);
 
-  // 6. Slack 발송
-
+  // 6. Slack 발송 (같은 보고기간의 이전 게시물은 지우고 새로 올림)
   const slack = new WebClient(config.slack.token);
   try {
+    await cleanUpPreviousReports(slack, parsedForCheck.period);
     await slack.chat.postMessage({
       channel: REPORT_CHANNEL_ID,
-      text: slackText,
+      text: slackText, // 알림·검색용 전문 (블록이 렌더링을 담당)
+      blocks,
       unfurl_links: false,
       unfurl_media: false
     });
@@ -291,5 +420,7 @@ module.exports = {
   executeSmartfarmWeeklyPipeline: executeExecutiveWeeklyPipeline,
   getWeekRanges,
   groupLogsByProject,
-  isInReportScope
+  isInReportScope,
+  parseReport,
+  buildSlackBlocks
 };
