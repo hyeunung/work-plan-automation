@@ -1,16 +1,20 @@
 /**
- * 한슬 주간업무 보고 파이프라인 (대표 보고용)
+ * 스마트팜·영남대 주간업무 보고 파이프라인 (대표 보고용)
  *
  * 매주 월요일 아침 실행:
  *  1) 지난주(월~일) Team Members DB 전원의 Notion Daily Work Log + 이번 주 Weekly Plan 수집
  *  2) 각 일지를 관련 Task → Project 로 묶어 "프로젝트 단위" 데이터로 정리
- *  3) docs/weekly-report-guide.md 지침을 그대로 프롬프트에 실어 Claude로 서술형 보고서 생성
- *  4) Slack 비공개 채널 #weekly-report 로 발송 + docs/executive-weekly/ 에 아카이브
+ *  3) Projects DB '선택' 분류가 보고 범위(기본: 스마트팜-*, 영남대)인 프로젝트만 남김
+ *  4) docs/weekly-report-guide.md 지침을 그대로 프롬프트에 실어 Claude로 서술형 보고서 생성
+ *  5) Slack 비공개 채널 #weekly-report 로 발송 + docs/executive-weekly/ 에 아카이브
  *
- * 보고 범위는 스마트팜에 국한하지 않고 한슬의 모든 업무다 (CLAUDE.md "보고 범위" 참조).
+ * 보고 범위는 사용자(정현웅)가 대표에게 직접 보고하는 담당 영역 = 스마트팜 + 영남대 협력 과제다.
+ * 연구소 자체 업무·외부 프로젝트는 연구소가 따로 보고하므로 여기서 제외한다 (CLAUDE.md "보고 범위" 참조).
+ * 범위 판정은 프로젝트 이름이 아니라 Notion Projects DB의 '선택' 분류로 한다.
  *
  * 환경변수:
  *  - SLACK_WEEKLY_REPORT_CHANNEL_ID : 발송 채널 ID (기본 C0BLRVAGETS)
+ *  - WEEKLY_REPORT_CATEGORIES       : 포함할 '선택' 분류 접두어, 쉼표 구분 (기본 "스마트팜,영남대")
  *  - WEEKLY_REPORT_DRY_RUN=1        : 슬랙 발송 없이 콘솔 출력만 (로컬 테스트용)
  */
 process.env.TZ = process.env.TZ || 'Asia/Seoul';
@@ -21,7 +25,10 @@ const config = require('../config');
 const notionService = require('./notionService');
 const aiSummarizer = require('./aiSummarizer');
 
-const REPORT_TITLE = '한슬 주간업무 보고';
+const REPORT_TITLE = '스마트팜·영남대 주간업무 보고';
+// Projects DB '선택' 분류 접두어. 이 중 하나로 시작하는 분류의 프로젝트만 보고에 포함한다.
+const REPORT_CATEGORY_PREFIXES = (process.env.WEEKLY_REPORT_CATEGORIES || '스마트팜,영남대')
+  .split(',').map(s => s.trim()).filter(Boolean);
 const CLOSING_LINE = '이상 보고 마치겠습니다';
 const UNASSIGNED_PROJECT = '기타 업무';
 const REPORT_CHANNEL_ID = process.env.SLACK_WEEKLY_REPORT_CHANNEL_ID || 'C0BLRVAGETS';
@@ -130,6 +137,12 @@ function groupLogsByProject(memberData, tasksMap) {
   return ordered;
 }
 
+/** 프로젝트 분류가 보고 범위에 들어가는지 판정 ('기타 업무'처럼 프로젝트 없는 일지는 제외) */
+function isInReportScope(group) {
+  if (!group.category) return false;
+  return REPORT_CATEGORY_PREFIXES.some(prefix => group.category.startsWith(prefix));
+}
+
 /** 수집 데이터를 AI 입력용 텍스트로 직렬화 (A: 프로젝트별 일지, B: 팀원별 이번 주 계획) */
 function buildDataSection(projectGroups, memberData, ranges) {
   let body = '';
@@ -145,8 +158,10 @@ function buildDataSection(projectGroups, memberData, ranges) {
   });
 
   body += `\n\n[B. 이번 주 주간 계획 (Week Start ${formatKstDate(ranges.thisMonday)}) - 팀원별 원문]\n`;
-  body += `(계획 문장에 언급된 Task/프로젝트를 보고 A의 프로젝트 섹션에 맞춰 재배치할 것)\n`;
+  body += `(계획 문장에 언급된 Task/프로젝트를 보고 A의 프로젝트 섹션에 맞춰 재배치할 것. A에 없는 프로젝트(연구소 자체 업무·외부 프로젝트 등)의 계획은 보고에 넣지 않는다.)\n`;
+  const scopedMembers = new Set(projectGroups.flatMap(g => g.members));
   for (const { name, planText } of memberData) {
+    if (!scopedMembers.has(name)) continue; // 보고 범위 프로젝트에 일지가 없는 팀원의 계획은 생략
     body += `\n━━━ ${name} ━━━\n`;
     body += planText
       ? `${planText}\n`
@@ -156,8 +171,8 @@ function buildDataSection(projectGroups, memberData, ranges) {
 }
 
 function buildPrompt(guide, dataSection, ranges) {
-  return `너는 한슬 연구소의 선임 상급자다. 아래 [작성 지침]을 그대로 따라, 대표이사에게 구두 보고할 "${REPORT_TITLE}"를 작성하라.
-보고 범위는 스마트팜에 한정되지 않는다. 수집 데이터에 등장하는 한슬의 모든 프로젝트와 업무를 같은 비중으로 다룬다.
+  return `너는 한슬의 스마트팜·영남대 협력 과제 담당자다. 아래 [작성 지침]을 그대로 따라, 대표이사에게 구두 보고할 "${REPORT_TITLE}"를 작성하라.
+보고 범위는 수집 데이터에 제시된 프로젝트(스마트팜, 영남대)만이다. 수집 데이터에 없는 프로젝트나 업무는 언급하지 않는다.
 
 [작성 지침 전문]
 ${guide}
@@ -214,8 +229,18 @@ async function executeExecutiveWeeklyPipeline() {
   // 2. 일지 → 프로젝트 매핑 (관련 Task → Project)
   const taskIds = [...new Set(memberData.flatMap(m => m.logs.flatMap(log => (log.taskRelations || []).map(rel => rel.id))))];
   const tasksMap = taskIds.length > 0 ? await notionService.getTasksMap(taskIds) : {};
-  const projectGroups = groupLogsByProject(memberData, tasksMap);
-  console.log(`- 프로젝트 ${projectGroups.length}개로 정리: ${projectGroups.map(g => `${g.name}(${g.logs.length})`).join(', ')}`);
+  const allGroups = groupLogsByProject(memberData, tasksMap);
+  const projectGroups = allGroups.filter(isInReportScope);
+  const excluded = allGroups.filter(g => !isInReportScope(g));
+  console.log(`- 보고 범위 분류: ${REPORT_CATEGORY_PREFIXES.join(', ')}`);
+  console.log(`- 포함 프로젝트 ${projectGroups.length}개: ${projectGroups.map(g => `${g.name}[${g.category}](${g.logs.length})`).join(', ') || '(없음)'}`);
+  if (excluded.length > 0) {
+    console.log(`- 제외 프로젝트 ${excluded.length}개: ${excluded.map(g => `${g.name}[${g.category || '분류 없음'}](${g.logs.length})`).join(', ')}`);
+  }
+  if (projectGroups.length === 0) {
+    console.warn('⚠️ 보고 범위(스마트팜·영남대)에 해당하는 지난주 일지가 없어 보고서 생성을 생략합니다.');
+    return;
+  }
 
   // 3. AI 보고서 생성
   const guide = fs.readFileSync(GUIDE_PATH, 'utf8');
@@ -265,5 +290,6 @@ module.exports = {
   /** @deprecated 구 파이프라인명. 'smartfarm-weekly' 트리거 호환용으로만 유지 */
   executeSmartfarmWeeklyPipeline: executeExecutiveWeeklyPipeline,
   getWeekRanges,
-  groupLogsByProject
+  groupLogsByProject,
+  isInReportScope
 };
