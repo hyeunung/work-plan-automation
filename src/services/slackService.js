@@ -4,8 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const supabaseService = require('./supabaseService');
 const aiSummarizer = require('./aiSummarizer');
+const { NO_PROJECT_LABEL, getLogProjectLabel } = require('./notionService');
 
-const slack = new WebClient(config.slack.token);
+const slack =new WebClient(config.slack.token);
 
 const userIdCache = {};
 
@@ -230,12 +231,31 @@ function splitSectionText(text, limit = 2900) {
  * 일지와 연결된 Task의 프로젝트명을 " · 프로젝트명" 라벨로 반환합니다. (모든 업무를 동일하게 상세 보고하고, 소속만 구분 표시)
  */
 function formatProjectLabel(log, tasksMap) {
-  const projectNames = [...new Set(
-    (log.taskRelations || [])
-      .map(rel => tasksMap && tasksMap[rel.id]?.projectName)
-      .filter(Boolean)
-  )];
-  return projectNames.length > 0 ? ` · ${projectNames.join(', ')}` : '';
+  return ` · ${getLogProjectLabel(log, tasksMap)}`;
+}
+
+/**
+ * 주간 계획 항목을 프로젝트별로 묶습니다. (플랜 작성 순서와 무관하게 Task는 실제 소속 프로젝트 아래에 놓인다)
+ * 반환: 첫 등장 순서의 [{ name, url, notes: [subItem], tasks: [task] }], 내용이 없는 프로젝트 멘션은 제외
+ */
+function groupPlanByProject(plan) {
+  const groups = new Map();
+  const ensureGroup = (name) => {
+    if (!groups.has(name)) groups.set(name, { name, url: '', notes: [], tasks: [] });
+    return groups.get(name);
+  };
+
+  plan.forEach(task => {
+    if (task.isProjectGroup && !task.isUnlinkedTask) {
+      const group = ensureGroup(task.taskName.replace(/[📄@]/g, '').trim());
+      group.url = group.url || task.taskUrl;
+      group.notes.push(...task.subItems);
+    } else {
+      ensureGroup(task.projectName || NO_PROJECT_LABEL).tasks.push(task);
+    }
+  });
+
+  return [...groups.values()].filter(group => group.notes.length > 0 || group.tasks.length > 0);
 }
 
 /**
@@ -320,7 +340,11 @@ function buildCanvasMarkdownContent({ weekTitle, nextWeekTitle, memberName, anal
 
     // 대분류 행: 대칭 구조 및 '-' 대조 (마감일자 포함) - 태스크 제목에 Notion Task 페이지 하이퍼링크 직접 탑재!
     const taskLink = task.taskUrl ? `[${cleanTaskName}](${task.taskUrl})` : cleanTaskName;
-    markdownContent += `| 📄 **${taskLink}${dateLabel}** | **-** | 📄 **${taskLink}${dateLabel}** |\n`;
+    // 프로젝트 페이지 자체를 멘션한 행은 제목이 곧 프로젝트명이므로 📁로 구분하고, 태스크 행은 소속 프로젝트를 붙인다
+    const isProjectRow = task.isProjectGroup && !task.isUnlinkedTask;
+    const projectSuffix = isProjectRow ? '' : ` · ${task.projectName || NO_PROJECT_LABEL}`;
+    const rowIcon = isProjectRow ? '📁' : '📄';
+    markdownContent += `| ${rowIcon} **${taskLink}${dateLabel}**${projectSuffix} | **-** | ${rowIcon} **${taskLink}${dateLabel}** |\n`;
 
     task.subItems.forEach(sub => {
       const cleanItemName = sub.itemName.replace(/[📄@]/g, '').trim();
@@ -356,72 +380,45 @@ function buildCanvasMarkdownContent({ weekTitle, nextWeekTitle, memberName, anal
   if (!nextWeekPlan || nextWeekPlan.length === 0) {
     markdownContent += `*이번 주 등록된 계획이 없습니다.*\n`;
   } else {
-    let activeProjectName = '';
+    groupPlanByProject(nextWeekPlan).forEach(group => {
+      const projectLink = group.url ? `[${group.name}](${group.url})` : group.name;
+      markdownContent += `### 📁 Project: ${projectLink}\n`;
 
-    nextWeekPlan.forEach(task => {
-      const cleanTaskName = task.taskName.replace(/[📄@]/g, '').trim();
-      
-      // 마감일자 정보가 존재할 경우 (~M/D) 라벨 생성
-      let dateLabel = '';
-      if (task.dueDate) {
-        const dateObj = new Date(task.dueDate);
-        const m = dateObj.getUTCMonth() + 1;
-        const d = dateObj.getUTCDate();
-        dateLabel = ` (~${m}/${d})`;
-      }
+      // 상위 프로젝트 본문 자체에 하위 불릿이 달려있다면 렌더링
+      group.notes.forEach(sub => {
+        const cleanSubName = sub.itemName.replace(/[📄@]/g, '').trim();
+        markdownContent += `* ${cleanSubName}\n`;
+      });
 
-      const taskLink = task.taskUrl ? `[${cleanTaskName}](${task.taskUrl})` : cleanTaskName;
+      group.tasks.forEach(task => {
+        const cleanTaskName = task.taskName.replace(/[📄@]/g, '').trim();
 
-      if (task.isProjectGroup) {
-        // 상위 프로젝트/그룹을 만난 경우
-        activeProjectName = cleanTaskName;
-        markdownContent += `### 📁 Project: ${taskLink}\n`;
-        
-        // 상위 프로젝트 본문 자체에 하위 불릿이 달려있다면 렌더링
-        if (task.subItems && task.subItems.length > 0) {
-          task.subItems.forEach(sub => {
-            const cleanSubName = sub.itemName.replace(/[📄@]/g, '').trim();
-            markdownContent += `* ${cleanSubName}\n`;
-          });
-          markdownContent += `\n`;
+        // 마감일자 정보가 존재할 경우 (~M/D) 라벨 생성
+        let dateLabel = '';
+        if (task.dueDate) {
+          const dateObj = new Date(task.dueDate);
+          const m = dateObj.getUTCMonth() + 1;
+          const d = dateObj.getUTCDate();
+          dateLabel = ` (~${m}/${d})`;
         }
-      } else {
-        // 일반 태스크를 만난 경우
-        // 만약 이 태스크가 현재 활성화된 상위 프로젝트 소속이라면 계층 구조로 안착시킴!
-        if (task.projectName && (task.projectName === activeProjectName || activeProjectName !== '')) {
-          markdownContent += `* **Task: ${taskLink}${dateLabel}**\n`;
-          
-          task.subItems.forEach(sub => {
-            const cleanSubName = sub.itemName.replace(/[📄@]/g, '').trim();
-            const wasIncompleteLastWeek = analysisResults.some(lastTask => 
-              lastTask.subItems.some(lastSub => !lastSub.isCompleted && lastSub.itemName === sub.itemName)
-            );
 
-            if (wasIncompleteLastWeek) {
-              markdownContent += `  * ${cleanSubName} *(★ 지난주 미완료 이관 보완)*\n`;
-            } else {
-              markdownContent += `  * ${cleanSubName}\n`;
-            }
-          });
-        } else {
-          // 상위 프로젝트가 아예 없는 독립 태스크인 경우
-          markdownContent += `### 🔗 Task: ${taskLink}${dateLabel}\n`;
-          
-          task.subItems.forEach(sub => {
-            const cleanSubName = sub.itemName.replace(/[📄@]/g, '').trim();
-            const wasIncompleteLastWeek = analysisResults.some(lastTask => 
-              lastTask.subItems.some(lastSub => !lastSub.isCompleted && lastSub.itemName === sub.itemName)
-            );
+        const taskLink = task.taskUrl ? `[${cleanTaskName}](${task.taskUrl})` : cleanTaskName;
+        markdownContent += `* **Task: ${taskLink}${dateLabel}**\n`;
 
-            if (wasIncompleteLastWeek) {
-              markdownContent += `* ${cleanSubName} *(★ 지난주 미완료 이관 보완)*\n`;
-            } else {
-              markdownContent += `* ${cleanSubName}\n`;
-            }
-          });
-          markdownContent += `\n`;
-        }
-      }
+        task.subItems.forEach(sub => {
+          const cleanSubName = sub.itemName.replace(/[📄@]/g, '').trim();
+          const wasIncompleteLastWeek = analysisResults.some(lastTask =>
+            lastTask.subItems.some(lastSub => !lastSub.isCompleted && lastSub.itemName === sub.itemName)
+          );
+
+          if (wasIncompleteLastWeek) {
+            markdownContent += `  * ${cleanSubName} *(★ 지난주 미완료 이관 보완)*\n`;
+          } else {
+            markdownContent += `  * ${cleanSubName}\n`;
+          }
+        });
+      });
+      markdownContent += `\n`;
     });
   }
 
@@ -868,6 +865,7 @@ function buildDailySummarySection(memberReports, date = null) {
     
     for (const log of rep.dailyLogs) {
       const cleanTitle = log.title ? log.title.replace(/[📄@]/g, '').trim() : '제목 없음';
+      const titleLine = `* **${cleanTitle}** (${getLogProjectLabel(log, rep.tasksMap)})`;
       let purpose = '';
       let meaning = '';
       let overview = '';
@@ -888,9 +886,9 @@ function buildDailySummarySection(memberReports, date = null) {
       }
       
       if (overview) {
-        summary += `* **${cleanTitle}**\n  - *개요*: ${overview}\n`;
+        summary += `${titleLine}\n  - *개요*: ${overview}\n`;
       } else if (purpose || meaning) {
-        summary += `* **${cleanTitle}**\n`;
+        summary += `${titleLine}\n`;
         if (purpose) summary += `  - *목적*: ${purpose}\n`;
         if (meaning) summary += `  - *진행 의미*: ${meaning}\n`;
       } else {
@@ -903,7 +901,7 @@ function buildDailySummarySection(memberReports, date = null) {
             fallbackText = firstLine.replace(/^[•\-\*\s◦▪▫▶▷·⁃\(\)상세:]+/, '').trim();
           }
         }
-        summary += `* **${cleanTitle}**${fallbackText ? `\n  - *상세*: ${fallbackText}` : ''}\n`;
+        summary += `${titleLine}${fallbackText ? `\n  - *상세*: ${fallbackText}` : ''}\n`;
       }
     }
     summary += `\n`;
@@ -1086,10 +1084,9 @@ async function sendDailyReport({ date, memberReports, targetChannelName = '일�
       } else {
         for (const log of rep.dailyLogs) {
           const cleanTitle = log.title.replace(/[📄@]/g, '').trim();
-          const projectLabel = formatProjectLabel(log, rep.tasksMap);
-          dailyArchiveContent += `* **[${cleanTitle}](${log.url})**${projectLabel}\n`;
+          dailyArchiveContent += `* **[${cleanTitle}](${log.url})**${formatProjectLabel(log, rep.tasksMap)}\n`;
 
-          let logItemText = `• <${log.url}|*${cleanTitle}*>${projectLabel ? ` _(${projectLabel.replace(' · ', '')})_` : ''}\n`;
+          let logItemText = `• <${log.url}|*${cleanTitle}*> _(${getLogProjectLabel(log, rep.tasksMap)})_\n`;
           const logImages = [];
 
           if (log.details && log.details.trim()) {
