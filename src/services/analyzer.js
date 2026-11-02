@@ -113,7 +113,8 @@ function analyzeWork(weeklyPage, dailyLogs, tasksMap) {
           projectName: '', // 상위 프로젝트 자체이므로 공백
           subItems: [],
           rawElement: elem,
-          isProjectGroup: true // 상위 그룹 마킹!
+          isProjectGroup: true, // 상위 그룹 마킹!
+          isUnlinkedTask: !taskInfo || !!taskInfo.name // 조회 불가 페이지, 또는 Project 연결만 없는 태스크 (프로젝트 페이지는 Task 제목이 없음)
         };
         analysisResults.push(currentTask);
       }

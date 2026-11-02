@@ -14,6 +14,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { getLogProjectLabel } = require('./notionService');
 
 // 요약/정리에 사용할 모델. 품질을 올리고 싶으면 .env에 AI_SUMMARY_MODEL=claude-opus-5
 const AI_MODEL = process.env.AI_SUMMARY_MODEL || 'claude-sonnet-5';
@@ -135,7 +136,7 @@ const SUMMARY_PROMPT = `너는 한슬 팀의 선임 상급자다.
   - {핵심 문장. 중요한 결론·수치는 **굵게**}
   - {문장 단위로 2~4개 불릿. 결정사항/문제/다음 단계가 있으면 반드시 포함}
 
-- 원문에 프로젝트명이 있으면 업무명 뒤에 괄호로 붙이고, 없으면 괄호째 생략한다.
+- 모든 업무 줄의 끝에 원문의 "(프로젝트: ...)" 값을 괄호로 반드시 붙인다. 프로젝트명은 다듬지 말고 원문 그대로 쓴다.
 - 팀원 순서와 업무는 원문 순서를 따른다. 일지가 없는 팀원은 쓰지 않는다.
 - 위 형식의 마크다운만 출력한다. 서론/맺음말 금지.
 
@@ -150,10 +151,7 @@ function buildSummaryInput(memberReports, dateLabel) {
     body += `━━━ 팀원: ${cleanName} ━━━\n`;
     for (const log of rep.dailyLogs) {
       const cleanTitle = log.title ? log.title.replace(/[📄@]/g, '').trim() : '제목 없음';
-      const projectNames = [...new Set((log.taskRelations || [])
-        .map(rel => rep.tasksMap && rep.tasksMap[rel.id]?.projectName)
-        .filter(Boolean))];
-      body += `\n[태스크: ${cleanTitle}]${projectNames.length > 0 ? ` (프로젝트: ${projectNames.join(', ')})` : ''}\n`;
+      body += `\n[태스크: ${cleanTitle}] (프로젝트: ${getLogProjectLabel(log, rep.tasksMap)})\n`;
       if (log.details && log.details.trim()) {
         const cleanedDetails = log.details
           .split('\n')
@@ -181,6 +179,11 @@ async function summarizeDailyReports(memberReports, dateLabel) {
 
   if (!/^### 👤 .+ 님/m.test(result)) {
     throw new Error('AI 요약 결과가 기대 형식(### 👤 ... 님)과 다릅니다');
+  }
+  // 프로젝트 표기가 빠진 업무 줄이 있으면 호출부의 폴백 요약(프로젝트 표기 보장)으로 넘긴다
+  const missingProject = result.split('\n').filter(line => /^\*\s+\*\*/.test(line) && !/\*\*\s*\(.+\)\s*$/.test(line));
+  if (missingProject.length > 0) {
+    throw new Error(`AI 요약에 프로젝트 표기가 빠진 업무가 있습니다: ${missingProject[0]}`);
   }
   return result + '\n';
 }

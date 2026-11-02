@@ -303,8 +303,9 @@ const projectCategoryCache = {};
 
 async function getTasksMap(taskIds) {
   const taskMap = {};
-  try {
-    for (const taskId of taskIds) {
+  for (const taskId of taskIds) {
+    // 페이지 하나의 조회 실패(권한 없음 등)가 나머지 태스크의 프로젝트 표기까지 지우지 않도록 건별로 격리
+    try {
       const page = await notion.pages.retrieve({ page_id: taskId });
       const taskName = page.properties['Task']?.title?.[0]?.plain_text || page.properties['이름']?.title?.[0]?.plain_text || '';
       const dueDate = page.properties['마감일자']?.date?.end || page.properties['마감일자']?.date?.start || '';
@@ -342,11 +343,26 @@ async function getTasksMap(taskIds) {
         projectName: projectName,
         projectCategory: projectCategory
       };
+    } catch (error) {
+      console.error(`태스크(${taskId}) 조회 실패:`, error.message);
     }
-  } catch (error) {
-    console.error('getTasksMap 에러:', error);
   }
   return taskMap;
+}
+
+// 프로젝트를 알 수 없는 업무의 표기. 보고에는 프로젝트 표기가 항상 있어야 하므로 생략하지 않고 이 문구를 쓴다.
+const NO_PROJECT_LABEL = '프로젝트 미연결';
+
+/**
+ * 일지와 연결된 Task들의 프로젝트명을 표기용 문자열로 반환합니다. 연결이 없으면 NO_PROJECT_LABEL을 반환합니다.
+ */
+function getLogProjectLabel(log, tasksMap) {
+  const projectNames = [...new Set(
+    (log.taskRelations || [])
+      .map(rel => tasksMap && tasksMap[rel.id]?.projectName)
+      .filter(Boolean)
+  )];
+  return projectNames.length > 0 ? projectNames.join(', ') : NO_PROJECT_LABEL;
 }
 
 /**
@@ -546,6 +562,8 @@ module.exports = {
   getWeeklyPlanPage,
   getDailyWorkLogs,
   getTasksMap,
+  NO_PROJECT_LABEL,
+  getLogProjectLabel,
   updateWeeklyPlanRichText,
   syncProjectStatuses,
   getOverdueTasksByMember
