@@ -29,6 +29,8 @@ module.exports = {
   },
   supabase: {
     url: process.env.SUPABASE_URL || 'https://qvhbigvdfyvhoegkhvef.supabase.co',
-    key: process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2aGJpZ3ZkZnl2aG9lZ2todmVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc4MTQzNjAsImV4cCI6MjA2MzM5MDM2MH0.7VZlSwnNuE0MaQpDjuzeZFgjJrDBQOWA_COyqaM8Rbg'
+    // 서버 전용 키(sb_secret_…)만 넣는다. GitHub Actions secret SUPABASE_KEY 로 들어온다.
+    // 이 저장소는 공개돼 있으므로 키를 코드에 기본값으로 두지 않는다.
+    key: process.env.SUPABASE_KEY || ''
   }
 };
