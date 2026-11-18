@@ -1,6 +1,48 @@
 const config = require('../config');
 
 /**
+ * Supabase 키 종류를 판별합니다. 키 값은 어디에도 출력하지 않습니다.
+ *  - 'secret'       : 새 형식 서버 키 (sb_secret_…)
+ *  - 'service_role' : 예전 형식 서버 키 (JWT)
+ *  - 그 밖('anon', 'publishable', 'missing', 'unknown')은 서버 키가 아닙니다.
+ */
+function getKeyKind(key) {
+  if (!key) return 'missing';
+  if (key.startsWith('sb_secret_')) return 'secret';
+  if (key.startsWith('sb_publishable_')) return 'publishable';
+  try {
+    const payload = JSON.parse(Buffer.from(key.split('.')[1], 'base64url').toString('utf8'));
+    return payload.role || 'unknown';
+  } catch (error) {
+    return 'unknown';
+  }
+}
+
+const KEY_KIND = getKeyKind(config.supabase.key);
+const HAS_SERVER_KEY = KEY_KIND === 'secret' || KEY_KIND === 'service_role';
+
+if (!HAS_SERVER_KEY) {
+  const message = `[Supabase] 서버 전용 키가 아닙니다(현재: ${KEY_KIND}). 휴가·출장·공휴일 조회와 이미지 업로드를 할 수 없습니다.`;
+  // 자동 실행에서는 조용히 넘어가지 않고 실행을 실패시킵니다.
+  // 키가 맞지 않으면 조회가 빈 결과로 끝나, 휴가자에게 독려 DM이 가는 틀린 브리핑이 나갈 수 있습니다.
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    throw new Error(`${message} GitHub Actions secret SUPABASE_KEY 를 확인하세요.`);
+  }
+  console.warn(`${message} 로컬 실행이므로 Supabase 기능만 건너뛰고 계속합니다.`);
+}
+
+/**
+ * Supabase 요청 공통 헤더
+ */
+function authHeaders(extra = {}) {
+  return {
+    apikey: config.supabase.key,
+    Authorization: `Bearer ${config.supabase.key}`,
+    ...extra
+  };
+}
+
+/**
  * leave.type DB 코드값 -> 보고용 한글 라벨 매핑
  * (슬랙 브리핑에 half_pm 같은 코드값이 그대로 노출되는 문제 방지)
  */
@@ -29,6 +71,7 @@ function formatLeaveType(type) {
  * Supabase REST API 공통 fetch 헬퍼
  */
 async function supabaseFetch(path) {
+  if (!HAS_SERVER_KEY) throw new Error('서버 전용 키가 없어 조회를 건너뜁니다.');
   const url = `${config.supabase.url}${path}`;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -36,11 +79,7 @@ async function supabaseFetch(path) {
   try {
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'apikey': config.supabase.key,
-        'Authorization': `Bearer ${config.supabase.key}`,
-        'Content-Type': 'application/json'
-      },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       signal: controller.signal
     });
 
@@ -140,6 +179,7 @@ async function getApprovedBusinessTrips(date) {
  * 외부 이미지 URL을 다운로드하여 Supabase Storage 'workplan' 버킷에 업로드하고, 영구 Public URL을 반환합니다.
  */
 async function uploadImageToStorage(imageUrl) {
+  if (!HAS_SERVER_KEY) return imageUrl; // 로컬 실행: 업로드 없이 원본 주소 유지
   try {
     // 1. 이미지 다운로드 (5초 타임아웃)
     const downloadController = new AbortController();
@@ -175,12 +215,7 @@ async function uploadImageToStorage(imageUrl) {
     
     const uploadResponse = await fetch(uploadUrl, {
       method: 'POST',
-      headers: {
-        'apikey': config.supabase.key,
-        'Authorization': `Bearer ${config.supabase.key}`,
-        'Content-Type': contentType,
-        'x-upsert': 'true'
-      },
+      headers: authHeaders({ 'Content-Type': contentType, 'x-upsert': 'true' }),
       body: buffer,
       signal: uploadController.signal
     });
